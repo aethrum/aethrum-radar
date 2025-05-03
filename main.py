@@ -7,13 +7,11 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Variables de entorno
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
-# Diccionarios de emociones y formatos
 PALABRAS_CLAVE = {
     "dopamina": ["descubre", "nuevo", "revolucionario", "premio", "meta"],
     "oxitocina": ["ayuda", "solidaridad", "amor", "abrazo", "rescate"],
@@ -53,6 +51,20 @@ FORMATO_SUGERIDO = {
 }
 
 regeneraciones = {}
+
+def analizar_emocion_con_gpt(texto):
+    prompt = (
+        "Evalúa si este texto puede tener potencial emocional para contenido viral:\n\n"
+        f"{texto}\n\n"
+        "Responde solo con 'sí' o 'no'. No expliques nada."
+    )
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+    decision = response.choices[0].message.content.strip().lower()
+    return "sí" in decision
 
 def evaluar_emocion_detallado(texto):
     texto = texto.lower()
@@ -116,9 +128,22 @@ def enviar_mensaje_telegram(mensaje, buttons=False):
 @app.route("/", methods=["POST"])
 def recibir_noticia():
     data = request.get_json()
-    if not data: return jsonify({"ok": False, "error": "No se recibió ningún dato"})
+    if not data:
+        return jsonify({"ok": False, "error": "No se recibió ningún dato"})
 
     texto = f"{data.get('title','')} {data.get('description','')} {data.get('message','')}"
+
+    # PRIMER FILTRO: ¿GPT cree que tiene potencial emocional?
+    tiene_emocion_gpt = analizar_emocion_con_gpt(texto)
+
+    if not tiene_emocion_gpt:
+        enviar_mensaje_telegram(
+            "❌ <b>NOTICIA DESCARTADA</b>\n"
+            "GPT no detectó potencial emocional relevante.\n"
+            f"<b>Texto recibido:</b>\n{texto or '(vacío)'}"
+        )
+        return jsonify({"ok": True, "descartado_por_gpt": True})
+
     emociones, conteo = evaluar_emocion_detallado(texto)
 
     if emociones:
@@ -137,12 +162,11 @@ def recibir_noticia():
         regeneraciones["último"] = {"texto": texto, "emociones": emociones, "intentos": 1}
         enviar_mensaje_telegram(mensaje, buttons=True)
     else:
-        mensaje = (
+        enviar_mensaje_telegram(
             "❌ <b>NOTICIA DESCARTADA</b>\n"
             "No se detectaron emociones clave.\n"
             f"<b>Texto recibido:</b>\n{texto or '(vacío)'}"
         )
-        enviar_mensaje_telegram(mensaje)
 
     exportar_json({
         "entrada_original": data,
