@@ -34,7 +34,7 @@ def evaluar_emocion(texto):
     try:
         prompt = (
             "Eres un analista emocional experto. Evalúa si este texto genera una emoción fuerte para redes sociales. "
-            "Elige solo una: DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO o DESCARTAR. Justifica en 1 línea.
+            "Elige solo una: DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO o DESCARTAR. Justifica en 1 línea."
 
 "
             f"TEXTO:
