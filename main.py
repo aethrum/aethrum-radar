@@ -66,6 +66,18 @@ def analizar_emocion_con_gpt(texto):
     decision = response.choices[0].message.content.strip().lower()
     return "sí" in decision
 
+def extraer_texto_de_link(link):
+    prompt = (
+        f"Lee y resume emocionalmente el contenido de esta página web:\n{link}\n\n"
+        "Extrae solo el contenido importante como si fueras a usarlo en un video de TikTok."
+    )
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
 def evaluar_emocion_detallado(texto):
     texto = texto.lower()
     conteo = {e: sum(f" {p} " in f" {texto} " for p in PALABRAS_CLAVE[e]) for e in PALABRAS_CLAVE}
@@ -131,16 +143,17 @@ def recibir_noticia():
     if not data:
         return jsonify({"ok": False, "error": "No se recibió ningún dato"})
 
-    texto = f"{data.get('title','')} {data.get('description','')} {data.get('message','')}"
+    if "link" in data:
+        texto = extraer_texto_de_link(data["link"])
+    else:
+        texto = f"{data.get('title','')} {data.get('description','')} {data.get('message','')}"
 
-    # PRIMER FILTRO: ¿GPT cree que tiene potencial emocional?
     tiene_emocion_gpt = analizar_emocion_con_gpt(texto)
 
     if not tiene_emocion_gpt:
         enviar_mensaje_telegram(
-            "❌ <b>NOTICIA DESCARTADA</b>\n"
-            "GPT no detectó potencial emocional relevante.\n"
-            f"<b>Texto recibido:</b>\n{texto or '(vacío)'}"
+            "❌ <b>NOTICIA DESCARTADA</b>\nGPT no detectó potencial emocional relevante.\n"
+            f"<b>Texto recibido:</b>\n{texto[:300]}..."
         )
         return jsonify({"ok": True, "descartado_por_gpt": True})
 
