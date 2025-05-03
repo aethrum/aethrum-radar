@@ -54,8 +54,12 @@ regeneraciones = {}
 
 def analizar_emocion_con_gpt(texto):
     prompt = (
-        "Evalúa si este texto puede tener potencial emocional para contenido viral:\n\n"
-        f"{texto}\n\n"
+        "Evalúa si este texto puede tener potencial emocional para contenido viral:
+
+"
+        f"{texto}
+
+"
         "Responde solo con 'sí' o 'no'. No expliques nada."
     )
     response = openai.ChatCompletion.create(
@@ -68,7 +72,9 @@ def analizar_emocion_con_gpt(texto):
 
 def reescribir_con_emocion(texto):
     prompt = (
-        "Reescribe este texto de forma emocional, viral, humana y optimista, como si fueras un creador de contenido emocional para TikTok:\n\n"
+        "Reescribe este texto de forma emocional, viral, humana y optimista, como si fueras un creador de contenido emocional para TikTok:
+
+"
         f"{texto}"
     )
     response = openai.ChatCompletion.create(
@@ -77,9 +83,13 @@ def reescribir_con_emocion(texto):
         temperature=0.85
     )
     return response.choices[0].message.content.strip()
-    def extraer_texto_de_link(link):
+
+def extraer_texto_de_link(link):
     prompt = (
-        f"Lee y resume emocionalmente el contenido de esta página web:\n{link}\n\n"
+        f"Lee y resume emocionalmente el contenido de esta página web:
+{link}
+
+"
         "Extrae solo el contenido importante como si fueras a usarlo en un video de TikTok."
     )
     response = openai.ChatCompletion.create(
