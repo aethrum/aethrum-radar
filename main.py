@@ -25,7 +25,9 @@ def evaluar():
 
     mensaje = data.get("message", "")
     print("MENSAJE EXTRAÍDO:", mensaje)
-    
+
+    bot.send_message(chat_id="@Curiosidadesradar", text=mensaje)  # <--- AGREGA ESTA LÍNEA
+
     return "OK", 200
 
 def main():
