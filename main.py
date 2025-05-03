@@ -125,10 +125,12 @@ def recibir_noticia():
             f"<b>Hashtags:</b> {hashtags}"
         )
     else:
+        texto_preview = data.get("title") or data.get("message") or data.get("description") or "(sin contenido visible)"
         mensaje = (
             "❌ <b>NOTICIA DESCARTADA</b>\n"
             "No se detectaron emociones clave.\n"
-            "Agrega más impacto emocional al texto."
+            "Agrega más impacto emocional al texto.\n\n"
+            f"<b>Texto recibido:</b>\n{texto_preview}"
         )
 
     enviar_mensaje_telegram(mensaje)
@@ -141,6 +143,5 @@ def recibir_noticia():
 
     return jsonify({"ok": True, "emociones": emociones, "conteo": conteo})
 
-# ESTE ES EL NUEVO MAIN FINAL
 if __name__ == "__main__":
     app.run(debug=False)
