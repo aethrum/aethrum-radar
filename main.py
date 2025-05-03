@@ -1,84 +1,63 @@
-import os
-import datetime
 from flask import Flask, request, jsonify
 import requests
+import os
 
 app = Flask(__name__)
 
-# Seguridad: cargamos tokens desde variables de entorno
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Usa variables de entorno para proteger tu token y chat ID
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Ej: @Cutiosidadesradar
 
-# Diccionario de emociones y palabras clave
-EMOCIONES = {
-    "dopamina": [
-        "nuevo", "descubrimiento", "récord", "histórico", "impresionante",
-        "inesperado", "potente", "revoluciona", "impactante", "logro", "avanza",
-        "primera vez", "jamás visto", "sorprendente"
-    ],
-    "oxitocina": [
-        "salva vidas", "unió", "esperanza", "solidaridad", "ayudó",
-        "voluntario", "niño", "mamá", "papá", "milagro", "amor",
-        "familia", "rescate", "conmueve"
-    ],
-    "serotonina": [
-        "bienestar", "tranquilidad", "felicidad", "logro personal", "relajación",
-        "equilibrio", "armonía", "motivación", "superación", "crecimiento"
-    ],
-    "asombro": [
-        "NASA", "extraterrestre", "universo", "planeta", "dimensión",
-        "prehistórico", "fósil", "misterioso", "antiguo", "arqueología",
-        "hallazgo", "colosal", "gigante", "nunca antes visto"
-    ]
+# Diccionario de emociones con palabras clave asociadas
+PALABRAS_CLAVE = {
+    "dopamina": ["descubre", "nuevo", "revoluciona", "récord", "impresionante", "éxito", "avance", "primera vez"],
+    "oxitocina": ["ayuda", "solidaridad", "amor", "niño", "madre", "esperanza", "cura", "salvó", "rescató"],
+    "serotonina": ["logro", "calma", "tranquilidad", "bienestar", "mejoró", "equilibrio"],
+    "asombro": ["inesperado", "misterioso", "antártida", "prehistórico", "fósil", "extraterrestre", "oculto"]
 }
 
-@app.route("/", methods=["GET"])
-def index():
-    return "AETHRUM está escuchando...", 200
+def evaluar_emocion(texto):
+    texto = texto.lower()
+    emociones_detectadas = []
 
-@app.route("/evaluar", methods=["POST"])
-def evaluar():
-    data = request.get_json(force=True)
-    raw_mensaje = data.get("message", "")
-    mensaje = raw_mensaje.lower()
+    for emocion, palabras in PALABRAS_CLAVE.items():
+        if any(palabra in texto for palabra in palabras):
+            emociones_detectadas.append(emocion)
 
-    emocion_detectada = None
-    claves_usadas = []
+    return emociones_detectadas
 
-    for emocion, claves in EMOCIONES.items():
-        for palabra in claves:
-            if palabra in mensaje:
-                emocion_detectada = emocion
-                claves_usadas.append(palabra)
-
-    ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    if emocion_detectada:
-        texto = (
-            f"**¡Noticia relevante!**\n"
-            f"• Emoción: {emocion_detectada.upper()}\n"
-            f"• Palabras clave: {', '.join(set(claves_usadas))}\n"
-            f"• Fecha: {ahora}\n"
-            f"• Contenido:\n{raw_mensaje}"
-        )
-    else:
-        texto = (
-            f"Noticia sin emoción fuerte. Ignorada.\n"
-            f"• Fecha: {ahora}\n"
-            f"• Contenido:\n{raw_mensaje}"
-        )
-
-    enviar_a_telegram(texto)
-    return jsonify({"ok": True, "evaluada": True}), 200
-
-def enviar_a_telegram(mensaje: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    response = requests.post(url, json={
-        "chat_id": CHAT_ID,
+def enviar_mensaje_telegram(mensaje):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
         "text": mensaje,
-        "parse_mode": "Markdown"
-    })
-    return response.status_code == 200
+        "parse_mode": "HTML"
+    }
+
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        print("Mensaje enviado correctamente a Telegram.")
+    except Exception as e:
+        print("Error al enviar mensaje a Telegram:", e)
+
+@app.route("/", methods=["POST"])
+def recibir_noticia():
+    data = request.get_json()
+    if not data or "message" not in data:
+        return jsonify({"ok": False, "error": "No se recibió mensaje válido"}), 400
+
+    texto = data["message"]
+    emociones = evaluar_emocion(texto)
+
+    if emociones:
+        resumen = f"✅ <b>NOTICIA ACEPTADA</b>\n<b>Emociones:</b> {', '.join(emociones)}\n\n{texto}"
+    else:
+        resumen = f"❌ <b>DESCARTADA</b>\nSin emoción detectable.\n\n{texto}"
+
+    enviar_mensaje_telegram(resumen)
+
+    return jsonify({"ok": True, "emociones": emociones}), 200
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run()
