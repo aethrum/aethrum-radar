@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import os
+from bs4 import BeautifulSoup
 import openai
 
 app = Flask(__name__)
@@ -9,6 +10,8 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
+
+MEMORIA = {}
 
 PALABRAS_CLAVE = {
     "dopamina": ["descubre", "nuevo", "revolucionario", "premio", "meta"],
@@ -29,167 +32,154 @@ EMOJIS = {
 }
 
 HASHTAGS = {
-    "dopamina": "#inspiración #motivación", "oxitocina": "#conexiónhumana #solidaridad",
-    "serotonina": "#bienestar #equilibrio", "asombro": "#wow #descubrimiento",
-    "adrenalina": "#impactante #urgente", "feniletilamina": "#romance #emociones",
-    "norepinefrina": "#alerta #tensión", "anandamida": "#relax #libertad",
-    "neuroplasticidad": "#aprendizaje #hábitos"
+    "dopamina": "#motivación #descubrimiento", "oxitocina": "#empatía #solidaridad",
+    "serotonina": "#bienestar #tranquilidad", "asombro": "#sorprendente #misterio",
+    "adrenalina": "#impacto #urgente", "feniletilamina": "#romance #emociones",
+    "norepinefrina": "#alerta #tensión", "anandamida": "#relax #fluidez",
+    "neuroplasticidad": "#aprendizaje #cerebro"
 }
 
 FORMATO_SUGERIDO = {
-    "dopamina": "Reel dinámico con texto en pantalla",
-    "oxitocina": "Historia visual con narración cálida",
-    "serotonina": "Post tipo carrusel con frases relajantes",
-    "asombro": "Video de descubrimiento con efectos visuales",
-    "adrenalina": "Video urgente tipo breaking news",
-    "feniletilamina": "Reel romántico o nostálgico",
-    "norepinefrina": "Alerta visual con sonido dramático",
-    "anandamida": "Video lento y fluido, música suave",
-    "neuroplasticidad": "Carrusel educativo con tips visuales"
+    "dopamina": "Reel narrativo con ritmo rápido",
+    "oxitocina": "Video con voz cálida y subtítulos grandes",
+    "serotonina": "Carrusel estático con frases positivas",
+    "asombro": "Visual extremo + narración intrigante",
+    "adrenalina": "Video tipo alerta con sonido fuerte",
+    "feniletilamina": "Clip nostálgico o poético",
+    "norepinefrina": "Advertencia visual de tema tenso",
+    "anandamida": "Animación lenta con música suave",
+    "neuroplasticidad": "Carrusel educativo con tips"
 }
 
-regeneraciones = {}
+def extraer_texto_desde_url(url):
+    try:
+        r = requests.get(url, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        texto = " ".join([p.get_text() for p in soup.find_all("p")])
+        return texto.strip()[:3000]
+    except Exception as e:
+        return f"Error al extraer texto: {e}"
 
-def evaluar_emocion_detallado(texto):
+def evaluar_emocion(texto):
     texto = texto.lower()
-    conteo = {e: sum(f" {p} " in f" {texto} " for p in PALABRAS_CLAVE[e]) for e in PALABRAS_CLAVE}
-    emociones_detectadas = [e for e, c in conteo.items() if c > 0]
-    return emociones_detectadas, conteo
-
-def generar_resumen_emocional(emociones, conteo):
-    return "".join([f"{EMOJIS[e]} <b>{e.upper()}</b> — Intensidad: {'ALTA' if conteo[e]>=3 else 'MEDIA' if conteo[e]==2 else 'BAJA'}\n" for e in emociones])
-
-def sugerencia_formato(emociones, conteo):
-    if not emociones: return "No aplicable"
-    dominante = sorted(emociones, key=lambda e: conteo[e], reverse=True)[0]
-    return FORMATO_SUGERIDO.get(dominante, "Formato no definido")
-
-def hashtags_recomendados(emociones):
-    return " ".join([HASHTAGS[e] for e in emociones if e in HASHTAGS])
-
-def analizar_emocion_con_gpt(texto):
-    prompt = (
-        "Evalúa si este texto puede tener potencial emocional para contenido viral:\n\n"
-        f"{texto}\n\n"
-        "Responde solo con 'sí' o 'no'. No expliques nada."
-    )
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-    decision = response.choices[0].message.content.strip().lower()
-    return "sí" in decision
-
-def reescribir_con_emocion(texto):
-    prompt = (
-        "Reescribe este texto de forma emocional, viral, humana y optimista, como si fueras un creador de contenido emocional para TikTok:\n\n"
-        f"{texto}"
-    )
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.85
-    )
-    return response.choices[0].message.content.strip()
+    emociones = []
+    for emocion, palabras in PALABRAS_CLAVE.items():
+        if any(f" {p} " in f" {texto} " for p in palabras):
+            emociones.append(emocion)
+    return emociones
 
 def generar_contenido_viral(texto, emociones):
-    prompt = (
-        "Actúa como creador profesional de contenido viral en redes.\n"
-        f"Texto recibido: {texto}\n"
-        f"Emociones detectadas: {', '.join(emociones)}\n\n"
-        "Genera:\n"
-        "1. Un título emocional fuerte de máximo 10 palabras.\n"
-        "2. Un subtítulo que cause asombro, empatía o curiosidad.\n"
-        "3. Una pregunta final emocional que invite a comentar o guardar.\n\n"
-        "Solo responde con el contenido, sin explicaciones."
-    )
-    response = openai.ChatCompletion.create(
+    prompt = f"""Actúa como creador de contenido viral para redes. Emociones detectadas: {', '.join(emociones)}.
+    Texto base: {texto}
+
+    Genera:
+    1. Un título corto y emocional (máx 10 palabras)
+    2. Un subtítulo atractivo y emocional
+    3. Una pregunta final que invite a comentar o guardar
+
+    Solo da el contenido sin explicar nada.
+    """
+    res = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.9
     )
-    return response.choices[0].message.content.strip()
+    return res.choices[0].message.content.strip()
 
-def enviar_mensaje_telegram(mensaje, buttons=False, tipo="regenera"):
+def analizar_con_openai(texto):
+    prompt = f"""Evalúa si este texto tiene potencial emocional para contenido viral. Di si genera dopamina, oxitocina, serotonina o asombro. Si no sirve, explica por qué. Sé directo.
+
+Texto:
+{texto}
+"""
+    res = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+    return res.choices[0].message.content.strip()
+
+def enviar_telegram(mensaje, boton=False):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": mensaje,
         "parse_mode": "HTML"
     }
-    if buttons:
+    if boton:
         payload["reply_markup"] = {
-            "inline_keyboard": [[{"text": "🔁 Generar otra versión", "callback_data": tipo}]]
+            "inline_keyboard": [[{"text": "🔁 Generar otra versión", "callback_data": "regenerar"}]]
         }
-    try:
-        requests.post(url, json=payload).raise_for_status()
-    except Exception as e:
-        print("Error al enviar mensaje a Telegram:", e)
+    requests.post(url, json=payload)
 
 @app.route("/", methods=["POST"])
-def recibir_noticia():
+def recibir():
     data = request.get_json()
     if not data or "message" not in data:
-        return jsonify({"ok": False, "error": "No se encontró el campo 'message'"})
+        return jsonify({"ok": False, "error": "No message"})
 
-    texto = data["message"]
-    aprobado_por_gpt = analizar_emocion_con_gpt(texto)
+    entrada = data["message"]
+    if entrada.startswith("http"):
+        texto = extraer_texto_desde_url(entrada)
+    else:
+        texto = entrada
 
-    if not aprobado_por_gpt:
-        regeneraciones["último"] = {"texto": texto, "intentos": 0, "modo": "reparar"}
-        enviar_mensaje_telegram(
-            f"❌ <b>NOTICIA DESCARTADA</b>\nGPT no detectó emociones suficientes para contenido viral.\n\n<b>Texto recibido:</b>\n{texto}",
-            buttons=True, tipo="reparar"
-        )
-        return jsonify({"ok": True, "descartado_por_gpt": True})
+    if texto.startswith("Error"):
+        enviar_telegram(f"❌ <b>ERROR</b>
+{texto}")
+        return jsonify({"ok": False})
 
-    emociones, conteo = evaluar_emocion_detallado(texto)
-    resumen = generar_resumen_emocional(emociones, conteo)
-    formato = sugerencia_formato(emociones, conteo)
-    hashtags = hashtags_recomendados(emociones)
-    contenido_creado = generar_contenido_viral(texto, emociones)
-    mensaje = (
-        f"✅ <b>NOTICIA ACEPTADA</b>\n\n"
-        f"<b>Emociones detectadas:</b>\n{resumen}\n"
-        f"<b>Formato sugerido:</b> {formato}\n"
-        f"<b>Hashtags:</b> {hashtags}\n\n"
-        f"{contenido_creado}\n\n"
-        f"<i>Toca el botón abajo si no te gustó</i>"
-    )
-    regeneraciones["último"] = {"texto": texto, "emociones": emociones, "intentos": 1, "modo": "regenera"}
-    enviar_mensaje_telegram(mensaje, buttons=True)
+    emociones = evaluar_emocion(texto)
+    gpt_result = analizar_con_openai(texto)
+
+    if not emociones and "no" in gpt_result.lower():
+        MEMORIA["último"] = {"texto": texto, "emociones": [], "modo": "reparar"}
+        enviar_telegram(f"❌ <b>DESCARTADA</b>
+{gpt_result}
+
+{entrada}", boton=True)
+        return jsonify({"ok": True})
+
+    MEMORIA["último"] = {"texto": texto, "emociones": emociones, "modo": "regenerar"}
+
+    resumen = "\n".join([f"{EMOJIS.get(e,'')} <b>{e.upper()}</b>" for e in emociones])
+    formato = FORMATO_SUGERIDO.get(emociones[0], "Formato no definido") if emociones else "No detectado"
+    hashtags = " ".join([HASHTAGS[e] for e in emociones if e in HASHTAGS])
+    viral = generar_contenido_viral(texto, emociones)
+
+    mensaje = f"✅ <b>ACEPTADA</b>
+
+<b>Emociones:</b>
+{resumen}
+
+<b>Formato sugerido:</b> {formato}
+<b>Hashtags:</b> {hashtags}
+
+{viral}"
+    enviar_telegram(mensaje, boton=True)
     return jsonify({"ok": True})
 
 @app.route("/callback", methods=["POST"])
-def procesar_callback():
-    update = request.get_json()
-    query = update.get("callback_query", {})
-    datos = regeneraciones.get("último", {})
-    if query.get("data") == "regenera" and datos.get("modo") == "regenera":
-        if datos["intentos"] < 3:
-            nuevo = generar_contenido_viral(datos["texto"], datos["emociones"])
-            datos["intentos"] += 1
-            regeneraciones["último"] = datos
-            enviar_mensaje_telegram(f"🔁 <b>Versión nueva generada</b> (intento {datos['intentos']}):\n\n{nuevo}", buttons=True)
-    elif query.get("data") == "reparar" and datos.get("modo") == "reparar":
-        reparado = reescribir_con_emocion(datos["texto"])
-        emociones, conteo = evaluar_emocion_detallado(reparado)
-        if emociones:
-            resumen = generar_resumen_emocional(emociones, conteo)
-            formato = sugerencia_formato(emociones, conteo)
-            hashtags = hashtags_recomendados(emociones)
-            viral = generar_contenido_viral(reparado, emociones)
-            regeneraciones["último"] = {"texto": reparado, "emociones": emociones, "intentos": 1, "modo": "regenera"}
-            enviar_mensaje_telegram(
-                f"✅ <b>REPARADO CON ÉXITO</b>\n\n"
-                f"<b>Emociones detectadas:</b>\n{resumen}\n"
-                f"<b>Formato sugerido:</b> {formato}\n"
-                f"<b>Hashtags:</b> {hashtags}\n\n{viral}",
-                buttons=True
-            )
-        else:
-            enviar_mensaje_telegram("❌ Incluso reescribiendo, no se detectaron emociones suficientes.")
+def callback():
+    data = request.get_json()
+    if not data or "callback_query" not in data:
+        return jsonify({"ok": False})
+    query = data["callback_query"]
+    if query.get("data") != "regenerar":
+        return jsonify({"ok": False})
+
+    memo = MEMORIA.get("último", {})
+    texto = memo.get("texto", "")
+    emociones = memo.get("emociones", [])
+
+    if not texto:
+        enviar_telegram("⚠️ No hay contenido anterior para regenerar.")
+        return jsonify({"ok": False})
+
+    nuevo = generar_contenido_viral(texto, emociones)
+    enviar_telegram(f"🔁 <b>Versión regenerada:</b>
+
+{nuevo}", boton=True)
     return jsonify({"ok": True})
 
 if __name__ == "__main__":
