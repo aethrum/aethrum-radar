@@ -1,20 +1,29 @@
 import os
 import requests
+from flask import Flask, request
 from telegram import Bot, Update
-from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, MessageHandler, Filters
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 bot = Bot(token=TELEGRAM_TOKEN)
+app = Flask(__name__)
 
-def filter_message(update: Update, context: CallbackContext):
+def filter_message(update: Update, context):
     text = update.message.text
-    if "Nature" in text or "Science" in text or "NASA" in text:
-        if any(word in text.lower() for word in ["descubren", "activan", "revelan", "impactante", "neuronas", "emocional", "milagro", "inesperado"]):
-            update.message.reply_text("Esta noticia tiene potencial AETHRUM. Revisando...")
+    if "Nature" in text or "Science" in text:
+        if any(word in text.lower() for word in ["cura", "descubrimiento", "impactante", "esperanza"]):
+            update.message.reply_text("Esta noticia se queda.")
         else:
             update.message.reply_text("Noticia sin emoción fuerte. Ignorada.")
     else:
         update.message.reply_text("Fuente no verificada. Ignorada.")
+
+@app.route('/evaluar', methods=['POST'])
+def evaluar():
+    data = request.json
+    mensaje = data.get("message", "")
+    print("Mensaje recibido:", mensaje)
+    return "OK", 200
 
 def main():
     updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
@@ -25,3 +34,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    app.run(host='0.0.0.0', port=10000)
