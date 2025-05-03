@@ -1,55 +1,112 @@
-from flask import Flask, request, jsonify
-import os
 import logging
+import datetime
+import re
+from telegram import Bot, Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-app = Flask(__name__)
+# --- CONFIGURACIÓN DEL BOT ---
+TOKEN = '7124925219:AAHxbx64BtjzFewOZF4L1BlKyxMg6ZcODz0'
+CHANNEL_ID = '@CuriosidadesRadar'
 
-# Logging claro en consola para Render
-logging.basicConfig(level=logging.INFO)
+# --- SETUP ---
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+bot = Bot(token=TOKEN)
 
-# Home test
-@app.route('/', methods=['GET'])
-def index():
-    return 'AETHRUM RADAR ACTIVO', 200
+# --- LISTAS DE PALABRAS CLAVE POR EMOCIÓN ---
+dopamina_keywords = ['descubren', 'nuevo', 'récord', 'avance', 'increíble', 'impactante', 'milagro', 'asombroso', 'inesperado', 'primera vez', 'potente', 'tecnología', 'inteligencia', 'energia', 'futuro', 'bio']
+oxitocina_keywords = ['bebé', 'abrazo', 'rescate', 'ayuda', 'humanidad', 'amor', 'solidaridad', 'familia', 'perro', 'niño', 'vida', 'madre', 'padre', 'voluntarios', 'emoción']
+serotonina_keywords = ['felicidad', 'relajación', 'paz', 'logro', 'sabiduría', 'aprendizaje', 'bienestar', 'calma', 'sueño', 'crecimiento', 'armonía', 'mente', 'psicología']
+asombro_keywords = ['universo', 'galaxia', 'espacio', 'fósil', 'caverna', 'océano', 'civilización', 'dinosaurio', 'extraterrestre', 'cueva', 'antártida', 'planeta', 'hielo', 'arqueología', 'historia']
 
-# Webhook de IFTTT
-@app.route('/evaluar', methods=['POST'])
-def evaluar():
-    try:
-        # Validar que venga JSON
-        if not request.is_json:
-            logging.warning("Solicitud sin JSON válida")
-            return jsonify({"error": "Contenido no es JSON"}), 400
+# --- FUNCIONES CLAVE ---
 
-        data = request.get_json(force=True)
-        mensaje = data.get("message", "").strip()
+def detectar_emocion_y_palabras(mensaje):
+    mensaje_lower = mensaje.lower()
+    resultado = {'dopamina': [], 'oxitocina': [], 'serotonina': [], 'asombro': []}
 
-        logging.info(f"Mensaje recibido: {mensaje}")
+    for palabra in dopamina_keywords:
+        if palabra in mensaje_lower:
+            resultado['dopamina'].append(palabra)
 
-        if not mensaje:
-            logging.warning("Mensaje vacío o malformado")
-            return jsonify({"respuesta": "Mensaje vacío. Ignorado."}), 400
+    for palabra in oxitocina_keywords:
+        if palabra in mensaje_lower:
+            resultado['oxitocina'].append(palabra)
 
-        # Diccionario de palabras emocionales
-        palabras_clave = [
-            "cura", "descubren", "asombroso", "impactante", "milagro", "niños",
-            "oxitocina", "dopamina", "inesperado", "jamás visto", "revolucionario",
-            "vida", "increíble", "impresionante", "emocionante", "humanidad", "salvó"
-        ]
+    for palabra in serotonina_keywords:
+        if palabra in mensaje_lower:
+            resultado['serotonina'].append(palabra)
 
-        if any(palabra in mensaje.lower() for palabra in palabras_clave):
-            respuesta = "¡Noticia con emoción fuerte detectada!"
-        else:
-            respuesta = "Noticia sin emoción fuerte. Ignorada."
+    for palabra in asombro_keywords:
+        if palabra in mensaje_lower:
+            resultado['asombro'].append(palabra)
 
-        logging.info(f"Respuesta enviada: {respuesta}")
-        return jsonify({"respuesta": respuesta}), 200
+    return resultado
 
-    except Exception as e:
-        logging.error(f"Error en evaluar: {str(e)}")
-        return jsonify({"error": "Error interno en el servidor"}), 500
+def calcular_puntaje(resultado):
+    pesos = {'dopamina': 1.2, 'oxitocina': 1.5, 'serotonina': 1.1, 'asombro': 1.4}
+    total = 0
+    detalle = {}
 
-# Para correr en local (útil para testing)
+    for emocion, palabras in resultado.items():
+        score = len(palabras) * pesos[emocion]
+        total += score
+        detalle[emocion] = round(score, 2)
+
+    max_emocion = max(detalle, key=detalle.get)
+    porcentaje = min(100, int((total / 8) * 20))  # normalizamos
+    return porcentaje, max_emocion, detalle
+
+def extraer_fuente(texto):
+    match = re.search(r'https?://([^/\s]+)', texto)
+    return match.group(1) if match else 'desconocida'
+
+def generar_respuesta(mensaje):
+    emociones = detectar_emocion_y_palabras(mensaje)
+    porcentaje, emocion_dominante, detalle = calcular_puntaje(emociones)
+    fuente = extraer_fuente(mensaje)
+    ahora = datetime.datetime.now().strftime("%d/%m/%Y - %I:%M %p")
+
+    if porcentaje >= 90:
+        clasificacion = "✅ Publicar VIDEO de inmediato"
+    elif porcentaje >= 60:
+        clasificacion = "🟡 Publicar como historia"
+    else:
+        clasificacion = "🔘 Archivar, poco impacto"
+
+    respuesta = f"""
+🧠 Noticia recibida:
+{mensaje}
+
+🧪 Emoción dominante: *{emocion_dominante.capitalize()}* ({porcentaje}%)
+Palabras clave encontradas: {', '.join(emociones[emocion_dominante]) or 'ninguna'}
+
+Emociones detectadas:
+• Dopamina: {detalle['dopamina']}
+• Oxitocina: {detalle['oxitocina']}
+• Serotonina: {detalle['serotonina']}
+• Asombro: {detalle['asombro']}
+
+🕒 Fecha: {ahora}
+🌐 Fuente: {fuente}
+
+🎯 Clasificación AETHRUM:
+{clasificacion}
+"""
+    return respuesta
+
+# --- HANDLER ---
+def manejar_mensaje(update: Update, context: CallbackContext):
+    texto = update.message.text
+    respuesta = generar_respuesta(texto)
+    context.bot.send_message(chat_id=CHANNEL_ID, text=respuesta, parse_mode='Markdown')
+
+def iniciar_bot():
+    updater = Updater(token=TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, manejar_mensaje))
+    updater.start_polling()
+    updater.idle()
+
+# --- INICIO ---
 if __name__ == '__main__':
-    puerto = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=puerto)
+    iniciar_bot()
