@@ -21,10 +21,12 @@ def filter_message(update: Update, context):
 @app.route('/evaluar', methods=['POST'])
 def evaluar():
     data = request.get_json(force=True)
-print("DATA COMPLETA RECIBIDA:", data)
+    print("DATA COMPLETA RECIBIDA:", data)
 
-mensaje = data.get("message", "")
-print("MENSAJE EXTRAÍDO:", mensaje)
+    mensaje = data.get("message", "")
+    print("MENSAJE EXTRAÍDO:", mensaje)
+    
+    return "OK", 200
 
 def main():
     updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
