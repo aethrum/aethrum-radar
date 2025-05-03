@@ -1,80 +1,98 @@
 import os
-import openai
 import requests
+import openai
 from flask import Flask, request
+from bs4 import BeautifulSoup
 
+# --- CONFIGURACIÓN DE CLAVES ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
+
+# --- INICIALIZAR FLASK ---
 app = Flask(__name__)
 
-# CONFIGURA AQUÍ TUS CLAVES
-openai.api_key = os.getenv("OPENAI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# EMOCIONES CLAVE
-EMOCIONES_CLAVE = ["DOPAMINA", "OXITOCINA", "SEROTONINA", "ASOMBRO"]
-
-# ENVÍA MENSAJE A TELEGRAM
+# --- FUNCIÓN: ENVIAR A TELEGRAM ---
 def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "HTML"
-    }
-    requests.post(url, data=data)
-
-# ANÁLISIS LOCAL SIMPLE POR PALABRAS
-def analizar_emociones_clave(texto):
-    texto_mayus = texto.upper()
-    for emocion in EMOCIONES_CLAVE:
-        if emocion in texto_mayus:
-            return emocion
-    return None
-
-# EVALUACIÓN CON OPENAI (v1.0+)
-def evaluar_con_openai(texto):
     try:
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Eres un evaluador experto en emociones virales. Solo responde con una palabra: DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO o DESCARTAR."},
-                {"role": "user", "content": f"Elige solo una emoción dominante para este texto:\n{texto}"}
-            ],
-            temperature=0
-        )
-        resultado = response.choices[0].message.content.strip().upper()
-        return resultado
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": mensaje,
+            "parse_mode": "HTML"
+        }
+        requests.post(url, data=payload)
     except Exception as e:
-        return f"ERROR OPENAI: {str(e)}"
+        print("Error al enviar a Telegram:", e)
 
-# PROCESAMIENTO PRINCIPAL
+# --- FUNCIÓN: EXTRAER TEXTO DESDE UN LINK ---
+def extraer_texto_desde_url(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        textos = soup.find_all(['p', 'h1', 'h2'])
+        contenido = " ".join([t.get_text() for t in textos])
+        return contenido.strip()[:4000]  # Límite por seguridad
+    except Exception as e:
+        return f"[ERROR LINK] {str(e)}"
+
+# --- FUNCIÓN: EVALUAR CON OPENAI ---
+def evaluar_emocion(texto):
+    try:
+        respuesta = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres un analista emocional para contenido viral. Evalúa si el siguiente texto puede "
+                        "generar DOPAMINA, OXITOCINA, SEROTONINA o ASOMBRO. Si no hay emoción clara, responde DESCARTAR. "
+                        "Devuelve solo una palabra en mayúsculas."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": texto
+                }
+            ],
+            temperature=0.3,
+            max_tokens=10
+        )
+        return respuesta.choices[0].message.content.strip().upper()
+    except Exception as e:
+        return f"[ERROR OPENAI] {str(e)}"
+
+# --- RUTA PRINCIPAL ---
 @app.route("/", methods=["POST"])
-def recibir_mensaje():
-    data = request.json
-    if "message" not in data:
-        return "Sin mensaje", 200
+def recibir():
+    data = request.get_json()
+    texto_entrada = data.get("text", "").strip()
 
-    mensaje = data["message"].get("text", "")
-    if not mensaje:
-        return "Mensaje vacío", 200
+    if not texto_entrada:
+        return {"status": "error", "message": "Texto vacío"}, 400
 
-    texto_analizado = mensaje.strip()
-    emocion_detectada = analizar_emociones_clave(texto_analizado)
-
-    if emocion_detectada:
-        enviar_telegram(f"✅ Emoción detectada por palabras clave: <b>{emocion_detectada}</b>")
+    # LINK o TEXTO
+    if texto_entrada.startswith("http"):
+        texto_procesado = extraer_texto_desde_url(texto_entrada)
     else:
-        emocion_ia = evaluar_con_openai(texto_analizado)
-        if emocion_ia in EMOCIONES_CLAVE:
-            enviar_telegram(f"✅ Evaluación avanzada: <b>{emocion_ia}</b>")
-        elif emocion_ia.startswith("ERROR"):
-            enviar_telegram(f"⚠️ Error al evaluar con OpenAI:\n{emocion_ia}")
-        else:
-            enviar_telegram("❌ NOTICIA DESCARTADA\nNo se detectaron emociones clave ni impacto emocional suficiente.")
+        texto_procesado = texto_entrada
 
-    return "OK", 200
+    resultado = evaluar_emocion(texto_procesado)
 
-# INICIO DE FLASK
+    # --- RESPUESTA Y ENVÍO ---
+    if resultado in ["DOPAMINA", "OXITOCINA", "SEROTONINA", "ASOMBRO"]:
+        mensaje = f"✅ <b>NOTICIA ACEPTADA</b>\nEmoción detectada: <b>{resultado}</b>\n\n{texto_entrada}"
+    elif resultado.startswith("[ERROR"):
+        mensaje = f"⚠️ <b>ERROR EN SISTEMA</b>\n{resultado}"
+    else:
+        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>\nSin emoción clara.\n\n{texto_entrada}"
+
+    enviar_telegram(mensaje)
+    return {"status": "ok", "emocion": resultado}, 200
+
+# --- INICIO DEL SERVIDOR ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
