@@ -1,84 +1,69 @@
-from flask import Flask, request, jsonify
-import requests
 import os
+import requests
 import openai
+from flask import Flask, request
 
-app = Flask(__name__)
-
+# Configura tus claves de entorno
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 openai.api_key = OPENAI_API_KEY
 
-PALABRAS_CLAVE = {
-    "dopamina": ["descubre", "nuevo", "revolucionario", "premio", "meta"],
-    "oxitocina": ["ayuda", "solidaridad", "amor", "abrazo", "rescate"],
-    "serotonina": ["logro", "calma", "tranquilidad", "serenidad", "balance"],
-    "asombro": ["inesperado", "misterioso", "antiguo", "gigante", "colosal"],
-    "adrenalina": ["urgente", "peligro", "impacto", "explosión", "fuga"],
-    "feniletilamina": ["enamorado", "mariposas", "cita", "romance", "pasión"],
-    "norepinefrina": ["alerta", "estrés", "respuesta", "amenaza", "tensión"],
-    "anandamida": ["placer", "relajación", "fluidez", "libertad", "fluir"],
-    "neuroplasticidad": ["entrenamiento", "hábitos", "aprendizaje", "conexiones", "neuronas"]
-}
+app = Flask(__name__)
 
-def evaluar_emocion(texto):
-    texto = texto.lower()
-    emociones_detectadas = []
-    for emocion, palabras in PALABRAS_CLAVE.items():
-        if any(f" {palabra} " in f" {texto} " for palabra in palabras):
-            emociones_detectadas.append(emocion)
-    return emociones_detectadas
-
-def evaluar_con_openai(texto):
-    prompt = (
-        "Evalúa si este texto tiene potencial emocional para contenido viral. "
-        "Analiza si genera dopamina, oxitocina, serotonina o asombro. "
-        f"Texto: {texto}\n\nResponde con una de estas opciones:\n"
-        "- ALTO IMPACTO EMOCIONAL\n- IMPACTO MEDIO\n- DESCARTAR\n"
-        "Y da una breve razón."
-    )
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        return f"Error al evaluar con OpenAI: {str(e)}"
-
+# Función para enviar mensajes a Telegram
 def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "HTML"
-    }
     try:
-        requests.post(url, json=payload)
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
+        requests.post(url, data=data)
     except Exception as e:
-        print("Error al enviar mensaje:", e)
+        print(f"Error enviando a Telegram: {e}")
 
+# Análisis emocional con OpenAI
+def evaluar_emocion_con_openai(texto):
+    try:
+        prompt = (
+            "Evalúa si el siguiente texto puede generar una emoción poderosa como dopamina, "
+            "oxitocina, serotonina o asombro. Responde solo con una palabra en mayúsculas: "
+            "DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO o NINGUNA. Texto: " + texto
+        )
+
+        respuesta = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Eres un analista emocional experto en contenido viral."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+            max_tokens=10
+        )
+
+        emocion = respuesta.choices[0].message.content.strip().upper()
+        return emocion
+    except Exception as e:
+        return f"Error al evaluar con OpenAI:\n{str(e)}"
+
+# Ruta principal para recibir texto
 @app.route("/", methods=["POST"])
-def recibir_noticia():
+def recibir_texto():
     data = request.get_json()
-    if not data or "message" not in data:
-        return jsonify({"ok": False, "error": "No se encontró el campo 'message'"})
+    texto = data.get("text", "")
+    
+    if not texto:
+        return {"status": "error", "message": "No se recibió texto"}, 400
 
-    texto = data["message"]
-    emociones = evaluar_emocion(texto)
+    emocion = evaluar_emocion_con_openai(texto)
 
-    if emociones:
-        openai_eval = evaluar_con_openai(texto)
-        mensaje = f"✅ <b>NOTICIA ACEPTADA</b>\n\nEmociones detectadas: {', '.join(emociones)}\n\nEvaluación avanzada:\n{openai_eval}"
+    if emocion in ["DOPAMINA", "OXITOCINA", "SEROTONINA", "ASOMBRO"]:
+        mensaje = f"✅ <b>NOTICIA DESTACADA</b>\nEmoción detectada: <b>{emocion}</b>\n\nTexto recibido:\n{texto}"
     else:
-        openai_eval = evaluar_con_openai(texto)
-        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>\n\nNo se detectaron emociones clave.\n\nEvaluación avanzada:\n{openai_eval}\n\nTexto recibido:\n\n{texto}"
+        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>\nNo se detectaron emociones clave.\n\nTexto recibido:\n{texto}"
 
     enviar_telegram(mensaje)
-    return jsonify({"ok": True, "emociones": emociones})
+    return {"status": "ok", "emocion": emocion}
 
+# Iniciar servidor Flask
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=5000)
