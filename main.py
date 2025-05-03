@@ -1,9 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import os
-import json
 import openai
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -52,53 +50,6 @@ FORMATO_SUGERIDO = {
 
 regeneraciones = {}
 
-def analizar_emocion_con_gpt(texto):
-    prompt = (
-        "Evalúa si este texto puede tener potencial emocional para contenido viral:
-
-"
-        f"{texto}
-
-"
-        "Responde solo con 'sí' o 'no'. No expliques nada."
-    )
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-    decision = response.choices[0].message.content.strip().lower()
-    return "sí" in decision
-
-def reescribir_con_emocion(texto):
-    prompt = (
-        "Reescribe este texto de forma emocional, viral, humana y optimista, como si fueras un creador de contenido emocional para TikTok:
-
-"
-        f"{texto}"
-    )
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.85
-    )
-    return response.choices[0].message.content.strip()
-
-def extraer_texto_de_link(link):
-    prompt = (
-        f"Lee y resume emocionalmente el contenido de esta página web:
-{link}
-
-"
-        "Extrae solo el contenido importante como si fueras a usarlo en un video de TikTok."
-    )
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
-    )
-    return response.choices[0].message.content.strip()
-
 def evaluar_emocion_detallado(texto):
     texto = texto.lower()
     conteo = {e: sum(f" {p} " in f" {texto} " for p in PALABRAS_CLAVE[e]) for e in PALABRAS_CLAVE}
@@ -115,6 +66,32 @@ def sugerencia_formato(emociones, conteo):
 
 def hashtags_recomendados(emociones):
     return " ".join([HASHTAGS[e] for e in emociones if e in HASHTAGS])
+
+def analizar_emocion_con_gpt(texto):
+    prompt = (
+        "Evalúa si este texto puede tener potencial emocional para contenido viral:\n\n"
+        f"{texto}\n\n"
+        "Responde solo con 'sí' o 'no'. No expliques nada."
+    )
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+    decision = response.choices[0].message.content.strip().lower()
+    return "sí" in decision
+
+def reescribir_con_emocion(texto):
+    prompt = (
+        "Reescribe este texto de forma emocional, viral, humana y optimista, como si fueras un creador de contenido emocional para TikTok:\n\n"
+        f"{texto}"
+    )
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.85
+    )
+    return response.choices[0].message.content.strip()
 
 def generar_contenido_viral(texto, emociones):
     prompt = (
@@ -143,7 +120,7 @@ def enviar_mensaje_telegram(mensaje, buttons=False, tipo="regenera"):
     }
     if buttons:
         payload["reply_markup"] = {
-            "inline_keyboard": [[{"text": "💫 Reescribir con emoción" if tipo=="reparar" else "🔁 Generar otra versión", "callback_data": tipo}]]
+            "inline_keyboard": [[{"text": "🔁 Generar otra versión", "callback_data": tipo}]]
         }
     try:
         requests.post(url, json=payload).raise_for_status()
@@ -153,30 +130,25 @@ def enviar_mensaje_telegram(mensaje, buttons=False, tipo="regenera"):
 @app.route("/", methods=["POST"])
 def recibir_noticia():
     data = request.get_json()
-    if not data:
-        return jsonify({"ok": False, "error": "No se recibió ningún dato"})
+    if not data or "message" not in data:
+        return jsonify({"ok": False, "error": "No se encontró el campo 'message'"})
 
-    texto_original = ""
-    if "link" in data:
-        texto_original = extraer_texto_de_link(data["link"])
-    else:
-        texto_original = f"{data.get('title','')} {data.get('description','')} {data.get('message','')}"
+    texto = data["message"]
+    aprobado_por_gpt = analizar_emocion_con_gpt(texto)
 
-    if not analizar_emocion_con_gpt(texto_original):
-        regeneraciones["último"] = {"texto": texto_original, "intentos": 0, "modo": "reparar"}
+    if not aprobado_por_gpt:
+        regeneraciones["último"] = {"texto": texto, "intentos": 0, "modo": "reparar"}
         enviar_mensaje_telegram(
-            f"❌ <b>NOTICIA DESCARTADA</b>\nGPT no detectó emociones suficientes para contenido viral.\n"
-            "<b>Motivo:</b> Texto percibido como frío, académico o poco emocional.\n\n"
-            f"<b>Texto recibido:</b>\n{texto_original[:1000]}",
+            f"❌ <b>NOTICIA DESCARTADA</b>\nGPT no detectó emociones suficientes para contenido viral.\n\n<b>Texto recibido:</b>\n{texto}",
             buttons=True, tipo="reparar"
         )
         return jsonify({"ok": True, "descartado_por_gpt": True})
 
-    emociones, conteo = evaluar_emocion_detallado(texto_original)
+    emociones, conteo = evaluar_emocion_detallado(texto)
     resumen = generar_resumen_emocional(emociones, conteo)
     formato = sugerencia_formato(emociones, conteo)
     hashtags = hashtags_recomendados(emociones)
-    contenido_creado = generar_contenido_viral(texto_original, emociones)
+    contenido_creado = generar_contenido_viral(texto, emociones)
     mensaje = (
         f"✅ <b>NOTICIA ACEPTADA</b>\n\n"
         f"<b>Emociones detectadas:</b>\n{resumen}\n"
@@ -185,7 +157,7 @@ def recibir_noticia():
         f"{contenido_creado}\n\n"
         f"<i>Toca el botón abajo si no te gustó</i>"
     )
-    regeneraciones["último"] = {"texto": texto_original, "emociones": emociones, "intentos": 1, "modo": "regenera"}
+    regeneraciones["último"] = {"texto": texto, "emociones": emociones, "intentos": 1, "modo": "regenera"}
     enviar_mensaje_telegram(mensaje, buttons=True)
     return jsonify({"ok": True})
 
@@ -221,4 +193,5 @@ def procesar_callback():
     return jsonify({"ok": True})
 
 if __name__ == "__main__":
-    app.run(debug=False, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
