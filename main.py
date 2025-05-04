@@ -4,21 +4,16 @@ from flask import Flask, request, jsonify
 import requests
 from bs4 import BeautifulSoup
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Flask app
 app = Flask(__name__)
 
-# Load env vars
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Validate env vars
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID")
 
-# Emotion keywords (reducidos para prueba)
 EMOTION_KEYWORDS = {
     "Dopamina": ["success", "goal", "motivation", "reward", "pleasure"],
     "Oxitocina": ["love", "trust", "family", "support", "bond"],
@@ -64,19 +59,21 @@ def send_to_telegram(message):
     except Exception as e:
         logging.error(f"Telegram error: {e}")
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
+@app.route("/", methods=["POST"])
+def root_webhook():
     data = request.get_json()
-    if not data or ("texto" not in data and "url" not in data):
-        return jsonify({"status": "error", "message": "Missing 'texto' or 'url'"}), 400
+    message = data.get("message")
 
-    text = data.get("texto") or extract_text_from_url(data.get("url"))
+    if not message:
+        return jsonify({"status": "error", "message": "Missing 'message' field"}), 400
+
+    text = message if not message.startswith("http") else extract_text_from_url(message)
     if not text or len(text.strip()) < 30:
-        return jsonify({"status": "error", "message": "Text too short for analysis"}), 400
+        return jsonify({"status": "error", "message": "Text too short or failed to extract"}), 400
 
     emotion, scores = detect_emotion(text)
-    message = f"<b>Detected Emotion:</b> {emotion}\n\nText sample:\n{text[:300]}..."
-    send_to_telegram(message)
+    final_msg = f"<b>Emotion Detected:</b> {emotion}\n\n{text[:300]}..."
+    send_to_telegram(final_msg)
 
     return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
 
