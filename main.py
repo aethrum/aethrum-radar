@@ -1,156 +1,117 @@
 import os
 import requests
 import openai
-from flask import Flask, request
 from bs4 import BeautifulSoup
-
-app = Flask(__name__)
+from flask import Flask, request
+from telegram import Bot
 
 # Variables de entorno
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Inicialización
+bot = Bot(token=TELEGRAM_TOKEN)
 openai.api_key = OPENAI_API_KEY
+app = Flask(__name__)
 
-# Palabras clave por emoción
-PALABRAS_CLAVE = {
-    "DOPAMINA": ["nuevo", "descubrimiento", "premio", "avance", "sorprendente", "primera vez"],
-    "OXITOCINA": ["rescate", "ayuda", "solidaridad", "amor", "abrazo", "salvó"],
-    "SEROTONINA": ["logro", "calma", "tranquilidad", "serenidad", "cura", "balance", "esperanza"],
-    "ASOMBRO": ["inesperado", "misterioso", "antiguo", "gigante", "colosal", "jamás visto"]
+# Diccionario de emociones con palabras clave
+EMOCIONES = {
+    "DOPAMINA": ["descubrimiento", "avance", "nuevo", "impacto", "invento", "potente", "logro"],
+    "OXITOCINA": ["abrazo", "rescate", "ayuda", "solidaridad", "familia", "salvó", "compasión"],
+    "SEROTONINA": ["calma", "sabiduría", "paz", "tranquilidad", "reflexión", "armonía"],
+    "ASOMBRO": ["gigante", "antiguo", "inesperado", "nunca antes", "colosal", "misterioso"]
 }
-
-def enviar_telegram(mensaje):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": mensaje,
-            "parse_mode": "HTML"
-        }
-        requests.post(url, data=payload)
-    except Exception as e:
-        print("Error al enviar a Telegram:", e)
-
-def analizar_palabras_clave(texto):
+def analizar_emocion_por_palabras(texto):
     texto = texto.lower()
-    conteo = {emocion: 0 for emocion in PALABRAS_CLAVE}
-    for emocion, palabras in PALABRAS_CLAVE.items():
+    puntajes = {emocion: 0 for emocion in EMOCIONES}
+    for emocion, palabras in EMOCIONES.items():
         for palabra in palabras:
             if palabra in texto:
-                conteo[emocion] += 1
-    emocion_detectada = max(conteo, key=conteo.get)
-    return emocion_detectada if conteo[emocion_detectada] > 0 else "DESCARTAR"
+                puntajes[emocion] += 1
+    max_emocion = max(puntajes, key=puntajes.get)
+    return max_emocion if puntajes[max_emocion] > 0 else "DESCARTAR"
 
-def evaluar_con_openai(texto):
+def clasificar_con_openai(texto):
+    prompt = (
+        "Clasifica el siguiente texto en una sola emoción dominante: "
+        "DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO o DESCARTAR. "
+        "Solo responde con una palabra. No expliques nada.\n\n"
+        f"Texto: {texto}"
+    )
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Evalúa si este texto genera DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO o se debe DESCARTAR. Responde solo una palabra en mayúsculas."
-                },
-                {
-                    "role": "user",
-                    "content": texto
-                }
-            ],
-            temperature=0.3,
-            max_tokens=10
+        respuesta = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=5
         )
-        return response.choices[0].message.content.strip().upper()
+        emocion = respuesta.choices[0].message.content.strip().upper()
+        if emocion in EMOCIONES or emocion == "DESCARTAR":
+            return emocion
     except Exception as e:
-        return f"ERROR OPENAI: {e}"
+        print("Error OpenAI:", e)
+    return "DESCARTAR"
+
 def generar_guion_emocional(texto, emocion):
+    prompt = (
+        f"Actúa como un creador de contenido viral. Crea un guión de 3 partes para un video "
+        f"emocional de 17 segundos basado en esta emoción: {emocion}. No seas académico. "
+        f"Debe tener gancho, desarrollo y cierre. Texto base:\n\n{texto}"
+    )
     try:
-        prompt = f"""
-Crea un guión de 17 segundos estilo TikTok, dividido en 3 partes:
-1. Gancho inicial impactante
-2. Explicación emocional rápida del evento
-3. Cierre con llamado a la acción
-
-Emoción dominante: {emocion}
-Texto base: {texto}
-
-El guión debe ser humano, emocionante, y de alto impacto.
-        """
-        response = openai.chat.completions.create(
+        respuesta = openai.chat.completions.create(
             model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Eres un creador experto en contenido viral emocional."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.8,
             max_tokens=300
         )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"[ERROR GUION] {e}"
+        return respuesta.choices[0].message.content.strip()
+    except:
+        return "Error generando guión"
 
-def sugerir_formato(emocion):
-    if emocion == "DOPAMINA":
-        return "Reel con subtítulos grandes y cortes rápidos"
-    elif emocion == "OXITOCINA":
-        return "Historia con música suave y voz en off cálida"
-    elif emocion == "ASOMBRO":
-        return "Carrusel visual con zooms lentos"
-    elif emocion == "SEROTONINA":
-        return "Video narrado estilo relajante con texto flotante"
-    else:
-        return "Formato no definido"
-
-def extraer_texto_desde_url(url):
+def extraer_texto_de_url(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        textos = soup.find_all(['p', 'h1', 'h2'])
-        contenido = " ".join([t.get_text() for t in textos])
-        return contenido.strip()[:4000]
-    except Exception as e:
-        return f"[ERROR LINK] {str(e)}"
+        respuesta = requests.get(url, headers=headers, timeout=10)
+        sopa = BeautifulSoup(respuesta.text, "html.parser")
+        textos = [tag.get_text() for tag in sopa.find_all(["p", "h1", "h2"])]
+        return " ".join(textos)[:4000]
+    except:
+        return ""
         @app.route("/", methods=["POST"])
-def recibir():
+def recibir_noticia():
     data = request.get_json()
     texto = data.get("text", "").strip()
 
-    if not texto:
-        return {"status": "error", "message": "Texto vacío"}, 400
-
+    # Si llega un link, intenta extraer texto
     if texto.startswith("http"):
-        procesado = extraer_texto_desde_url(texto)
-    else:
-        procesado = texto
+        texto_extraido = extraer_texto_de_url(texto)
+        if texto_extraido:
+            texto = texto_extraido
 
-    emocion_keywords = analizar_palabras_clave(procesado)
-    emocion_openai = evaluar_con_openai(procesado)
+    if not texto:
+        return {"status": "error", "mensaje": "Texto vacío"}, 400
 
-    emocion_final = (
-        emocion_openai if emocion_openai in PALABRAS_CLAVE else emocion_keywords
-        if emocion_keywords != "DESCARTAR" else "DESCARTAR"
-    )
+    emocion_palabra = analizar_emocion_por_palabras(texto)
+    emocion_gpt = clasificar_con_openai(texto)
+    emocion_final = emocion_gpt if emocion_gpt != "DESCARTAR" else emocion_palabra
 
     if emocion_final == "DESCARTAR":
-        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>"
-        enviar_telegram(mensaje)
-        return {"status": "ok", "emocion": "DESCARTAR"}, 200
+        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>\n\nSin emoción relevante."
+    else:
+        guion = generar_guion_emocional(texto, emocion_final)
+        mensaje = (
+            f"✅ <b>NOTICIA ACEPTADA</b>\n"
+            f"<b>Emoción detectada:</b> {emocion_final}\n\n"
+            f"<b>Guión sugerido:</b>\n{guion}"
+        )
 
-    guion = generar_guion_emocional(procesado, emocion_final)
-    formato = sugerir_formato(emocion_final)
+    try:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        print("Error enviando mensaje:", e)
 
-    mensaje = f"""
-✅ <b>NOTICIA ACEPTADA</b>
-<b>Emoción:</b> {emocion_final}
-<b>Formato sugerido:</b> {formato}
-
-<b>Guion sugerido:</b>
-{guion}
-
-<b>Fuente:</b> {texto}
-    """.strip()
-
-    enviar_telegram(mensaje)
     return {"status": "ok", "emocion": emocion_final}, 200
 
 if __name__ == "__main__":
