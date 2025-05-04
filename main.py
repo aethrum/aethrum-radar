@@ -1,3 +1,6 @@
+if not all([openai.api_key, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+    logging.error("Faltan variables de entorno requeridas.")
+    raise EnvironmentError("Faltan variables de entorno requeridas.")
 import os
 import json
 import re
@@ -8,8 +11,6 @@ import requests
 import openai
 from collections import Counter
 from dotenv import load_dotenv
-
-# Load environment variables
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
