@@ -14,29 +14,30 @@ load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN")  # Token para autenticar el webhook
+
+# Validar variables de entorno
+if not openai.api_key or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    logging.error("Faltan variables de entorno requeridas.")
+    exit(1)
 
 # Flask app init
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Emotion keywords (DEFINITIVO)
+# Emotion keywords
 EMOTION_KEYWORDS = {
     "Dopamina": ["logro", "éxito", "recompensa", "motivación", "placer", "meta", "avance", "progreso", "superación", "triunfo",
-                 "ambición", "reto", "desafío", "objetivo", "ganancia", "beneficio", "mejora", "crecimiento", "desarrollo", "innovación",
-                 "descubrimiento", "curiosidad", "aprendizaje", "exploración", "novedad", "sorpresa", "expectativa", "anticipación", "esperanza", "inspiración",
-                 "pasión", "entusiasmo", "energía", "vitalidad", "dinamismo", "actividad", "productividad", "eficiencia", "rendimiento", "logística",
-                 "planificación", "organización", "estrategia", "táctica", "habilidad", "destreza", "competencia", "maestría", "excelencia", "cambio"],
-    "Oxitocina": ["amor", "afecto", "cariño", "ternura", "empatía", "compasión", "solidaridad", "amistad", "confianza", "lealtad",
-                  "vínculo", "conexión", "relación", "intimidad", "proximidad", "abrazo", "caricia", "beso", "apoyo", "comprensión",
-                  "escucha", "diálogo", "comunicación", "cooperación", "colaboración", "unidad", "familia", "hogar", "madre", "padre",
-                  "hijo", "hermano", "pareja", "matrimonio", "compañía", "presencia", "seguridad", "protección", "cuidado", "altruismo",
-                  "generosidad", "bondad", "amabilidad", "dulzura", "sensibilidad", "respeto", "tolerancia", "aceptación", "perdón", "reconciliación"],
-    # Puedes agregar aquí las otras emociones si lo necesitas hoy
+                 "ambición", "reto", "desafío", "objetivo", "ganancia", "beneficio", "mejora", "crecimiento", "desarrollo", "innovación"],
+    "Oxitocina": ["amor", "afecto", "cariño", "ternura", "empatía", "compasión", "solidaridad", "amistad", "confianza", "lealtad"]
 }
 
 # Utilidades
 def clean_text(text):
     return re.sub(r'[^a-zA-ZÀ-ÿ\s]', '', text).lower()
+
+def truncate_text(text, max_length=1000):
+    return text[:max_length]
 
 def extract_text_from_url(url):
     try:
@@ -44,9 +45,11 @@ def extract_text_from_url(url):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, 'html.parser')
         return soup.get_text(separator=' ', strip=True)
-    except Exception as e:
-        logging.error(f"Error scraping URL: {e}")
-        return None
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout al intentar acceder a la URL: {url}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error al realizar la solicitud: {e}")
+    return None
 
 def detect_emotion(text):
     word_list = clean_text(text).split()
@@ -57,8 +60,9 @@ def detect_emotion(text):
     return dominant, counts
 
 def generate_prompt(emotion, text):
+    text = truncate_text(text)
     return (
-        f"Texto base:\n\n{text[:1000]}\n\n"
+        f"Texto base:\n\n{text}\n\n"
         f"Emoción dominante detectada: {emotion.upper()}.\n\n"
         "Genera un guion viral para un video de 17 segundos dividido en 5 bloques:\n"
         "1. Gancho emocional\n"
@@ -103,6 +107,11 @@ def send_to_telegram(message):
 # Webhook
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    # Autenticación básica del webhook
+    token = request.headers.get("Authorization")
+    if token != f"Bearer {WEBHOOK_TOKEN}":
+        return jsonify({"status": "error", "message": "Unauthorized"}), 403
+
     if not request.is_json:
         return jsonify({"status": "error", "message": "Invalid JSON"}), 400
 
