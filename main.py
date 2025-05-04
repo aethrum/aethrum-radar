@@ -126,9 +126,14 @@ def root_webhook():
     emotion, scores = detect_emotion(text)
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
+try:
     with open("registros.csv", "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([today, emotion])
+        print(">>> Registro guardado en CSV")  # Esto aparecerá en Render logs
+except Exception as e:
+    logging.error(f"Error guardando CSV: {e}")
+    send_to_telegram("⚠️ No se pudo guardar el registro en CSV.")
 
     final_msg = generar_mensaje_emocional(emotion, scores, text, message if message.startswith("http") else None)
     send_to_telegram(final_msg)
