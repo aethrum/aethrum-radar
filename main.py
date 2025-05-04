@@ -99,9 +99,9 @@ def send_to_telegram(message):
 def root_webhook():
     data = request.get_json()
     message = data.get("message")
-
-        if message == "/resumen":
-            try:
+    
+    if message == "/resumen":
+        try:
             from collections import Counter
             today = datetime.utcnow().strftime("%Y-%m-%d")
             with open("registros.csv", "r") as f:
