@@ -1,6 +1,3 @@
-if not all([openai.api_key, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    logging.error("Faltan variables de entorno requeridas.")
-    raise EnvironmentError("Faltan variables de entorno requeridas.")
 import os
 import json
 import re
@@ -8,35 +5,53 @@ import logging
 from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
 import requests
-import openai
 from collections import Counter
 from dotenv import load_dotenv
+import openai
+
+# Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN")  # Token para autenticar el webhook
 
-if not openai.api_key or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    logging.error("Faltan variables de entorno requeridas.")
-    exit(1)
+# Validate environment variables
+required_vars = {
+    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+    "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
+    "TELEGRAM_CHAT_ID": os.getenv("TELEGRAM_CHAT_ID")
+}
 
+missing_vars = [k for k, v in required_vars.items() if not v]
+if missing_vars:
+    logging.error(f"Faltan variables de entorno requeridas: {', '.join(missing_vars)}")
+    raise EnvironmentError("Variables faltantes: " + ", ".join(missing_vars))
+
+# Assign secrets
+openai.api_key = required_vars["OPENAI_API_KEY"]
+TELEGRAM_BOT_TOKEN = required_vars["TELEGRAM_BOT_TOKEN"]
+TELEGRAM_CHAT_ID = required_vars["TELEGRAM_CHAT_ID"]
+
+# Initialize Flask app
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Emotions dictionary (to be filled with valid keywords)
 EMOTION_KEYWORDS = {
-    "Dopamina": ["logro", "éxito", "recompensa", "motivación", "placer", "meta", "avance", "progreso", "superación", "triunfo",
-                 "ambición", "reto", "desafío", "objetivo", "ganancia", "beneficio", "mejora", "crecimiento", "desarrollo", "innovación"],
-    "Oxitocina": ["amor", "afecto", "cariño", "ternura", "empatía", "compasión", "solidaridad", "amistad", "confianza", "lealtad"]
+    "Dopamina": ["logro", "éxito", "recompensa", "motivación"],
+    "Oxitocina": ["amor", "cariño", "confianza", "amistad"],
+    "Serotonina": ["felicidad", "calma", "gratitud", "orgullo"],
+    "Asombro": ["sorpresa", "maravilla", "descubrimiento", "fascinación"],
+    "Adrenalina": ["emoción", "intensidad", "acción", "peligro"],
+    "Feniletilamina": ["pasión", "romance", "enamoramiento", "atracción"],
+    "Norepinefrina": ["energía", "alerta", "foco", "vitalidad"],
+    "Anandamida": ["relajación", "paz", "equilibrio", "bienestar"],
+    "Acetilcolina": ["concentración", "memoria", "aprendizaje", "atención"]
 }
 
 def clean_text(text):
+    """Limpia el texto eliminando caracteres especiales y convirtiéndolo a minúsculas."""
     return re.sub(r'[^a-zA-ZÀ-ÿ\s]', '', text).lower()
 
-def truncate_text(text, max_length=1000):
-    return text[:max_length]
-
 def extract_text_from_url(url):
+    """Extrae texto del HTML de una URL."""
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
@@ -44,33 +59,37 @@ def extract_text_from_url(url):
         return soup.get_text(separator=' ', strip=True)
     except requests.exceptions.Timeout:
         logging.error(f"Timeout al intentar acceder a la URL: {url}")
+        return None
     except requests.exceptions.RequestException as e:
         logging.error(f"Error al realizar la solicitud: {e}")
-    return None
+        return None
 
 def detect_emotion(text):
+    """Detecta la emoción dominante en el texto."""
     word_list = clean_text(text).split()
-    word_counter = Counter(word_list)
-    counts = {emotion: sum(word_counter.get(word, 0) for word in keywords)
-              for emotion, keywords in EMOTION_KEYWORDS.items()}
+    counts = {}
+    for emotion, keywords in EMOTION_KEYWORDS.items():
+        count = sum(word in keywords for word in word_list)
+        counts[emotion] = count
     dominant = max(counts, key=counts.get)
     return dominant, counts
 
 def generate_prompt(emotion, text):
-    text = truncate_text(text)
+    """Genera un prompt para OpenAI basado en la emoción detectada."""
     return (
-        f"Texto base:\n\n{text}\n\n"
-        f"Emoción dominante detectada: {emotion.upper()}.\n\n"
-        "Genera un guion viral para un video de 17 segundos dividido en 5 bloques:\n"
-        "1. Gancho emocional\n"
-        "2. Desarrollo veloz\n"
-        "3. Punto de giro\n"
-        "4. Cierre emocional\n"
-        "5. Llamado a la acción impactante\n\n"
-        "Agrega un TÍTULO emocional y sugiere FORMATO visual para redes sociales. Sé creativo."
+        f"Basado en el siguiente texto:\n\n{text[:1000]}\n\n"
+        f"Identificamos que la emoción química dominante es **{emotion}**.\n\n"
+        "Crea un guion viral para un video de 17 segundos dividido en 5 bloques:\n"
+        "1. Gancho emocional impactante\n"
+        "2. Desarrollo rápido\n"
+        "3. Momento de tensión o giro\n"
+        "4. Resolución emocional\n"
+        "5. Llamado a la acción fuerte\n\n"
+        "Agrega un título emocional y sugiere un formato visual ideal para redes sociales. Sé muy creativo."
     )
 
 def send_to_openai(prompt):
+    """Envía un prompt a OpenAI y devuelve la respuesta."""
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
@@ -87,27 +106,24 @@ def send_to_openai(prompt):
         return None
 
 def send_to_telegram(message):
+    """Envía un mensaje a Telegram."""
     try:
         telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "HTML"
+            "parse_mode": "Markdown"
         }
         r = requests.post(telegram_url, json=payload)
         r.raise_for_status()
         return True
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         logging.error(f"Telegram error: {e}")
         return False
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # Autenticación básica del webhook
-    token = request.headers.get("Authorization")
-    if token != f"Bearer {WEBHOOK_TOKEN}":
-        return jsonify({"status": "error", "message": "Unauthorized"}), 403
-
+    """Procesa solicitudes entrantes al webhook."""
     if not request.is_json:
         return jsonify({"status": "error", "message": "Invalid JSON"}), 400
 
@@ -124,16 +140,16 @@ def webhook():
         return jsonify({"status": "error", "message": "Missing 'texto' or 'url'"}), 400
 
     if len(text.strip()) < 30:
-        return jsonify({"status": "error", "message": "Text too short"}), 400
+        return jsonify({"status": "error", "message": "Text too short for meaningful analysis"}), 400
 
     emotion, all_counts = detect_emotion(text)
     prompt = generate_prompt(emotion, text)
     script = send_to_openai(prompt)
 
-    if not script or len(script) < 20:
-        return jsonify({"status": "error", "message": "Script too short"}), 500
+    if not script:
+        return jsonify({"status": "error", "message": "Failed to generate script"}), 500
 
-    sent = send_to_telegram(f"<b>Emoción detectada:</b> {emotion.upper()}\n\n{script}")
+    sent = send_to_telegram(f"*Emoción detectada:* {emotion}\n\n{script}")
 
     return jsonify({
         "status": "ok",
