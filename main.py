@@ -80,7 +80,7 @@ def extraer_texto_de_url(url):
     except:
         return ""
         @app.route("/", methods=["POST"])
-def recibir_noticia():
+        def recibir_noticia():
     data = request.get_json()
     url = data.get('url')
     if url:
