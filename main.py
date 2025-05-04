@@ -145,7 +145,7 @@ def recibir():
         mensaje = mensaje = f"<b>NOTICIA DESCARTADA</b>"
 No se detectó emoción clara.
 
-{texto}"
+mensaje = f"<b>NOTICIA:</b> {texto}"
         enviar_telegram(mensaje)
         return {"status": "ok", "emocion": "DESCARTAR"}, 200
 
