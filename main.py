@@ -1,120 +1,125 @@
+from flask import Flask, request, jsonify
 import os
 import requests
-import openai
 from bs4 import BeautifulSoup
-from flask import Flask, request, jsonify
-from telegram import Bot
+import openai
 
-# Configuración de entorno
+app = Flask(__name__)
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
-# Inicializar Flask y Telegram Bot
-app = Flask(__name__)
-bot = Bot(token=TELEGRAM_TOKEN)
-
-# Palabras clave por emoción neuroquímica
-EMOCIONES = {
-    "DOPAMINA": ["descubrimiento", "avance", "nuevo", "impacto", "invento", "logro", "innovador"],
-    "OXITOCINA": ["abrazo", "rescate", "ayuda", "solidaridad", "familia", "salvó", "unidos"],
-    "SEROTONINA": ["calma", "sabiduría", "paz", "tranquilidad", "reflexión", "armonía"],
-    "ASOMBRO": ["gigante", "antiguo", "inesperado", "jamás visto", "colosal", "misterioso"],
-    "ADRENALINA": ["urgente", "peligro", "explosión", "alerta", "intenso", "correr"]
+PALABRAS_CLAVE = {
+    "dopamina": [
+        "descubrimiento", "logro", "avance", "premio", "innovación", "éxito", "mejora", "novedad", "triunfo", "impacto",
+        "impulso", "motivación", "reto", "reto superado", "cambio", "reto alcanzado", "productividad", "habilidad",
+        "hack", "inteligencia", "curioso", "ciencia", "avance médico", "tecnología", "meta", "logrado", "beneficio",
+        "desarrollo", "potencial", "progreso", "superación", "determinación", "proyecto", "solución", "crecimiento",
+        "reinvención", "ganancia", "mejorado", "alto rendimiento", "record", "eficiencia", "autonomía", "adrenalina buena",
+        "biohacking", "excelencia", "objetivo", "conquista", "felicidad"
+    ],
+    "oxitocina": [
+        "abrazo", "cariño", "amistad", "apoyo", "conexión", "compasión", "empatía", "solidaridad", "amor", "beso",
+        "confianza", "ternura", "acompañamiento", "generosidad", "gratitud", "ayuda", "equipo", "familia", "perdón",
+        "unión", "escucha", "reencuentro", "protección", "compañía", "cooperación", "abrazar", "gesto", "consuelo",
+        "aprecio", "rescate", "socorro", "entrega", "humanidad", "lealtad", "respeto", "sensibilidad", "comprensión",
+        "solidario", "madre", "padre", "hermano", "infancia", "mascota", "gesto noble", "tiempo juntos", "pertenencia",
+        "grupo", "tribu", "alianza"
+    ],
+    "serotonina": [
+        "calma", "relajación", "tranquilidad", "equilibrio", "bienestar", "serenidad", "armonía", "descanso", "rutina sana",
+        "hábitos", "meditación", "pausa", "naturaleza", "gratitud", "sol", "día perfecto", "aire libre", "sonrisa", "lectura",
+        "orden", "claridad", "autocontrol", "paz", "mindfulness", "silencio", "fluidez", "salud emocional", "autocuidado",
+        "estabilidad", "relajado", "gratificante", "estímulo positivo", "sin prisa", "control", "respiración", "oxígeno",
+        "paseo", "energía positiva", "ritmo", "balance", "plenitud", "satisfacción", "descubrimiento suave", "sabiduría",
+        "dormir bien", "vida lenta", "momentos simples", "claridad mental", "felicidad simple"
+    ],
+    "asombro": [
+        "increíble", "inusual", "gigante", "descubrimiento", "colosal", "inesperado", "impactante", "sorprendente", "misterioso",
+        "antiguo", "prehistórico", "universo", "fósil", "esqueleto", "momento exacto", "maravilla", "único", "extraño",
+        "impresionante", "marciano", "cosmos", "glaciar", "iceberg", "caverna", "milagro", "aurora", "ovni", "planeta nuevo",
+        "anomalía", "genialidad", "talento fuera de serie", "prodigio", "código antiguo", "inteligencia animal", "fenómeno natural",
+        "inexplicable", "arqueología", "bajo tierra", "cambio radical", "física cuántica", "alienígena", "galaxia", "súper",
+        "cometa", "telescopio", "nasa", "inteligencia del pasado", "exploración", "viaje al centro"
+    ],
+    "adrenalina": [
+        "peligro", "acción", "salto", "vértigo", "riesgo", "velocidad", "urgente", "rescate", "límite", "escape",
+        "huida", "correr", "incendio", "impacto", "ataque", "tensión", "sismo", "inundación", "desafío", "combate",
+        "grito", "adrenalina pura", "explosión", "drama", "tiempo límite", "intenso", "reacción", "salvarse", "caída",
+        "intensidad", "búsqueda extrema", "rastreo", "al límite", "situación crítica", "shock", "detonante", "reacción veloz",
+        "alta energía", "acelerado", "temblor", "alarma", "cápsula del tiempo", "tope", "estrés útil", "impulso",
+        "instinto", "supervivencia", "sobresalto", "persecución"
+    ]
 }
-def analizar_emocion_por_palabras(texto):
+def detectar_emocion(texto):
     texto = texto.lower()
-    puntajes = {e: 0 for e in EMOCIONES}
-    for emocion, palabras in EMOCIONES.items():
-        for palabra in palabras:
-            if palabra in texto:
-                puntajes[emocion] += 1
-    emocion_detectada = max(puntajes, key=puntajes.get)
-    return emocion_detectada if puntajes[emocion_detectada] > 0 else "DESCARTAR"
+    conteo = {emocion: sum(texto.count(p) for p in palabras) for emocion, palabras in EMOCIONES.items()}
+    emocion_dominante = max(conteo, key=conteo.get)
+    if conteo[emocion_dominante] == 0:
+        return "ninguna"
+    return emocion_dominante
 
-def clasificar_con_openai(texto):
-    prompt = (
-        "Clasifica el siguiente texto con una sola palabra: "
-        "DOPAMINA, OXITOCINA, SEROTONINA, ASOMBRO, ADRENALINA o DESCARTAR. "
-        "No expliques. Solo la emoción en mayúsculas:\n\n"
-        f"{texto}"
-    )
+# Generar guion viral usando OpenAI GPT
+def generar_guion_openai(texto, emocion):
+    prompt = f"""
+Texto: {texto}
+Emoción dominante: {emocion.upper()}
+Crea un guion viral para TikTok de 17 segundos, dividido en 5 bloques, con título emocional, CTA fuerte, y formato visual sugerido.
+Responde en este formato exacto:
+Título:
+Guion:
+CTA:
+Formato:
+    """
     try:
-        respuesta = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=5,
-            temperature=0.2
-        )
-        emocion = respuesta.choices[0].message.content.strip().upper()
-        return emocion if emocion in EMOCIONES or emocion == "DESCARTAR" else "DESCARTAR"
-    except:
-        return "DESCARTAR"
-
-def generar_contenido_emocional(texto, emocion):
-    prompt = (
-        f"Actúa como un creador de contenido viral para TikTok. "
-        f"Genera un guión emocional breve (máx. 300 caracteres), con gancho inicial, desarrollo breve y cierre provocador. "
-        f"Incluye CTA emocional y formato sugerido (reel, historia, carrusel). "
-        f"Texto base:\n\n{texto}\n\nEmoción dominante: {emocion}"
-    )
-    try:
-        respuesta = openai.chat.completions.create(
+        respuesta = openai.ChatCompletion.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.8
+            messages=[
+                {"role": "system", "content": "Eres un experto en marketing viral emocional."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=600
         )
-        return respuesta.choices[0].message.content.strip()
-    except:
-        return "Error generando guión emocional."
+        return respuesta.choices[0].message["content"]
+    except Exception as e:
+        return f"Error al generar guion: {e}"
 
-def extraer_contenido(url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        textos = [t.get_text() for t in soup.find_all(["p", "h1", "h2"])]
-        return " ".join(textos)[:4000]
-    except:
-        return ""
+# Enviar el contenido final a Telegram
 def enviar_a_telegram(mensaje):
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode="HTML", disable_web_page_preview=True)
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode='HTML')
     except Exception as e:
-        print("Error enviando a Telegram:", e)
+        logging.error(f"Error enviando a Telegram: {e}")
 
+# Webhook principal del sistema
 @app.route("/webhook", methods=["POST"])
-def recibir_noticia():
-    data = request.get_json()
-    url = data.get("url")
-    texto_directo = data.get("text")
+def webhook():
+    try:
+        data = request.json
+        texto = data.get("texto") or data.get("url") or ""
 
-    if url:
-        texto = extraer_contenido(url)
-    elif texto_directo:
-        texto = texto_directo
-    else:
-        return jsonify({"status": "error", "message": "No se recibió texto ni link"}), 400
+        if texto.startswith("http"):
+            html = requests.get(texto, timeout=10).text
+            soup = BeautifulSoup(html, "html.parser")
+            texto = soup.get_text(separator=" ", strip=True)
 
-    emocion_palabra = analizar_emocion_por_palabras(texto)
-    emocion_openai = clasificar_con_openai(texto)
+        if len(texto) < 50:
+            return jsonify({"error": "Texto demasiado corto"}), 400
 
-    emocion_final = emocion_openai if emocion_openai != "DESCARTAR" else emocion_palabra
+        emocion = detectar_emocion(texto)
+        if emocion == "ninguna":
+            return jsonify({"status": "descartado", "razon": "sin emoción dominante"})
 
-    if emocion_final == "DESCARTAR":
-        mensaje = "❌ <b>NOTICIA DESCARTADA</b>\nNo se detectó emoción significativa."
-    else:
-        guion = generar_contenido_emocional(texto, emocion_final)
-        mensaje = (
-            f"✅ <b>NOTICIA ACEPTADA</b>\n"
-            f"<b>Emoción:</b> {emocion_final}\n\n"
-            f"<b>Guión sugerido:</b>\n{guion}"
-        )
+        guion = generar_guion_openai(texto, emocion)
+        fecha = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+        mensaje = f"<b>AETHRUM</b>\n\n<b>Emoción:</b> {emocion.upper()}\n<b>Fecha:</b> {fecha}\n\n{guion}"
 
-    enviar_a_telegram(mensaje)
-    return jsonify({"status": "ok", "emocion": emocion_final})
+        enviar_a_telegram(mensaje)
+        return jsonify({"status": "ok", "emocion": emocion, "guion": guion})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    except Exception as e:
+        logging.error(f"Error en webhook: {e}")
+        return jsonify({"error": str(e)}), 500
