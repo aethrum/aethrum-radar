@@ -116,6 +116,10 @@ def root_webhook():
 
 @app.errorhandler(404)
 def route_not_found(e):
+    from flask import request
+    path = request.path
+    ua = request.headers.get("User-Agent", "no-agent")
+    logging.warning(f"404 on path: {path} | UA: {ua}")
     return jsonify({"status": "error", "message": "Ruta no válida"}), 404
 
 
