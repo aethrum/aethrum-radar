@@ -101,7 +101,7 @@ def root_webhook():
     message = data.get("message")
 
         if message == "/resumen":
-        try:
+            try:
             from collections import Counter
             today = datetime.utcnow().strftime("%Y-%m-%d")
             with open("registros.csv", "r") as f:
