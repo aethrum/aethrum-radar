@@ -1,130 +1,144 @@
-from flask import Flask, request, jsonify
 import os
+import json
+import re
 import logging
-import requests
+from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
+import requests
 import openai
+from collections import Counter
+from dotenv import load_dotenv
 
-app = Flask(__name__)
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# Load environment variables
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
 
-PALABRAS_CLAVE = {
-    "dopamina": [
-        "descubrimiento", "logro", "avance", "premio", "innovación", "éxito", "mejora", "novedad", "triunfo", "impacto",
-        "impulso", "motivación", "reto", "reto superado", "cambio", "reto alcanzado", "productividad", "habilidad",
-        "hack", "inteligencia", "curioso", "ciencia", "avance médico", "tecnología", "meta", "logrado", "beneficio",
-        "desarrollo", "potencial", "progreso", "superación", "determinación", "proyecto", "solución", "crecimiento",
-        "reinvención", "ganancia", "mejorado", "alto rendimiento", "record", "eficiencia", "autonomía", "adrenalina buena",
-        "biohacking", "excelencia", "objetivo", "conquista", "felicidad"
-    ],
-    "oxitocina": [
-        "abrazo", "cariño", "amistad", "apoyo", "conexión", "compasión", "empatía", "solidaridad", "amor", "beso",
-        "confianza", "ternura", "acompañamiento", "generosidad", "gratitud", "ayuda", "equipo", "familia", "perdón",
-        "unión", "escucha", "reencuentro", "protección", "compañía", "cooperación", "abrazar", "gesto", "consuelo",
-        "aprecio", "rescate", "socorro", "entrega", "humanidad", "lealtad", "respeto", "sensibilidad", "comprensión",
-        "solidario", "madre", "padre", "hermano", "infancia", "mascota", "gesto noble", "tiempo juntos", "pertenencia",
-        "grupo", "tribu", "alianza"
-    ],
-    "serotonina": [
-        "calma", "relajación", "tranquilidad", "equilibrio", "bienestar", "serenidad", "armonía", "descanso", "rutina sana",
-        "hábitos", "meditación", "pausa", "naturaleza", "gratitud", "sol", "día perfecto", "aire libre", "sonrisa", "lectura",
-        "orden", "claridad", "autocontrol", "paz", "mindfulness", "silencio", "fluidez", "salud emocional", "autocuidado",
-        "estabilidad", "relajado", "gratificante", "estímulo positivo", "sin prisa", "control", "respiración", "oxígeno",
-        "paseo", "energía positiva", "ritmo", "balance", "plenitud", "satisfacción", "descubrimiento suave", "sabiduría",
-        "dormir bien", "vida lenta", "momentos simples", "claridad mental", "felicidad simple"
-    ],
-    "asombro": [
-        "increíble", "inusual", "gigante", "descubrimiento", "colosal", "inesperado", "impactante", "sorprendente", "misterioso",
-        "antiguo", "prehistórico", "universo", "fósil", "esqueleto", "momento exacto", "maravilla", "único", "extraño",
-        "impresionante", "marciano", "cosmos", "glaciar", "iceberg", "caverna", "milagro", "aurora", "ovni", "planeta nuevo",
-        "anomalía", "genialidad", "talento fuera de serie", "prodigio", "código antiguo", "inteligencia animal", "fenómeno natural",
-        "inexplicable", "arqueología", "bajo tierra", "cambio radical", "física cuántica", "alienígena", "galaxia", "súper",
-        "cometa", "telescopio", "nasa", "inteligencia del pasado", "exploración", "viaje al centro"
-    ],
-    "adrenalina": [
-        "peligro", "acción", "salto", "vértigo", "riesgo", "velocidad", "urgente", "rescate", "límite", "escape",
-        "huida", "correr", "incendio", "impacto", "ataque", "tensión", "sismo", "inundación", "desafío", "combate",
-        "grito", "adrenalina pura", "explosión", "drama", "tiempo límite", "intenso", "reacción", "salvarse", "caída",
-        "intensidad", "búsqueda extrema", "rastreo", "al límite", "situación crítica", "shock", "detonante", "reacción veloz",
-        "alta energía", "acelerado", "temblor", "alarma", "cápsula del tiempo", "tope", "estrés útil", "impulso",
-        "instinto", "supervivencia", "sobresalto", "persecución"
-    ]
+# Flask app init
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Emotion keywords (DEFINITIVO)
+EMOTION_KEYWORDS = {
+    "Dopamina": ["logro", "éxito", "recompensa", "motivación", "placer", "meta", "avance", "progreso", "superación", "triunfo",
+                 "ambición", "reto", "desafío", "objetivo", "ganancia", "beneficio", "mejora", "crecimiento", "desarrollo", "innovación",
+                 "descubrimiento", "curiosidad", "aprendizaje", "exploración", "novedad", "sorpresa", "expectativa", "anticipación", "esperanza", "inspiración",
+                 "pasión", "entusiasmo", "energía", "vitalidad", "dinamismo", "actividad", "productividad", "eficiencia", "rendimiento", "logística",
+                 "planificación", "organización", "estrategia", "táctica", "habilidad", "destreza", "competencia", "maestría", "excelencia", "cambio"],
+    "Oxitocina": ["amor", "afecto", "cariño", "ternura", "empatía", "compasión", "solidaridad", "amistad", "confianza", "lealtad",
+                  "vínculo", "conexión", "relación", "intimidad", "proximidad", "abrazo", "caricia", "beso", "apoyo", "comprensión",
+                  "escucha", "diálogo", "comunicación", "cooperación", "colaboración", "unidad", "familia", "hogar", "madre", "padre",
+                  "hijo", "hermano", "pareja", "matrimonio", "compañía", "presencia", "seguridad", "protección", "cuidado", "altruismo",
+                  "generosidad", "bondad", "amabilidad", "dulzura", "sensibilidad", "respeto", "tolerancia", "aceptación", "perdón", "reconciliación"],
+    # Puedes agregar aquí las otras emociones si lo necesitas hoy
 }
-def detectar_emocion(texto):
-    texto = texto.lower()
-    conteo = {emocion: sum(texto.count(p) for p in palabras) for emocion, palabras in EMOCIONES.items()}
-    emocion_dominante = max(conteo, key=conteo.get)
-    if conteo[emocion_dominante] == 0:
-        return "ninguna"
-    return emocion_dominante
 
-# Generar guion viral usando OpenAI GPT
-def generar_guion_openai(texto, emocion):
-    prompt = f"""
-Texto: {texto}
-Emoción dominante: {emocion.upper()}
-Crea un guion viral para TikTok de 17 segundos, dividido en 5 bloques, con título emocional, CTA fuerte, y formato visual sugerido.
-Responde en este formato exacto:
-Título:
-Guion:
-CTA:
-Formato:
-    """
+# Utilidades
+def clean_text(text):
+    return re.sub(r'[^a-zA-ZÀ-ÿ\s]', '', text).lower()
+
+def extract_text_from_url(url):
     try:
-        respuesta = openai.ChatCompletion.create(
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, 'html.parser')
+        return soup.get_text(separator=' ', strip=True)
+    except Exception as e:
+        logging.error(f"Error scraping URL: {e}")
+        return None
+
+def detect_emotion(text):
+    word_list = clean_text(text).split()
+    word_counter = Counter(word_list)
+    counts = {emotion: sum(word_counter.get(word, 0) for word in keywords)
+              for emotion, keywords in EMOTION_KEYWORDS.items()}
+    dominant = max(counts, key=counts.get)
+    return dominant, counts
+
+def generate_prompt(emotion, text):
+    return (
+        f"Texto base:\n\n{text[:1000]}\n\n"
+        f"Emoción dominante detectada: {emotion.upper()}.\n\n"
+        "Genera un guion viral para un video de 17 segundos dividido en 5 bloques:\n"
+        "1. Gancho emocional\n"
+        "2. Desarrollo veloz\n"
+        "3. Punto de giro\n"
+        "4. Cierre emocional\n"
+        "5. Llamado a la acción impactante\n\n"
+        "Agrega un TÍTULO emocional y sugiere FORMATO visual para redes sociales. Sé creativo."
+    )
+
+def send_to_openai(prompt):
+    try:
+        response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Eres un experto en marketing viral emocional."},
+                {"role": "system", "content": "Eres un experto en creación de contenido viral emocional."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
+            temperature=0.8,
             max_tokens=600
         )
-        return respuesta.choices[0].message["content"]
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"Error al generar guion: {e}"
+        logging.error(f"OpenAI error: {e}")
+        return None
 
-# Enviar el contenido final a Telegram
-def enviar_a_telegram(mensaje):
+def send_to_telegram(message):
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=mensaje, parse_mode='HTML')
+        telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        r = requests.post(telegram_url, json=payload)
+        r.raise_for_status()
+        return True
     except Exception as e:
-        logging.error(f"Error enviando a Telegram: {e}")
+        logging.error(f"Telegram error: {e}")
+        return False
 
-# Webhook principal del sistema
+# Webhook
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    try:
-        data = request.json
-        texto = data.get("texto") or data.get("url") or ""
+    if not request.is_json:
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
 
-        if texto.startswith("http"):
-            html = requests.get(texto, timeout=10).text
-            soup = BeautifulSoup(html, "html.parser")
-            texto = soup.get_text(separator=" ", strip=True)
+    data = request.get_json()
+    text = ""
 
-        if len(texto) < 50:
-            return jsonify({"error": "Texto demasiado corto"}), 400
+    if "texto" in data:
+        text = data["texto"]
+    elif "url" in data:
+        text = extract_text_from_url(data["url"])
+        if not text:
+            return jsonify({"status": "error", "message": "Failed to extract content from URL"}), 400
+    else:
+        return jsonify({"status": "error", "message": "Missing 'texto' or 'url'"}), 400
 
-        emocion = detectar_emocion(texto)
-        if emocion == "ninguna":
-            return jsonify({"status": "descartado", "razon": "sin emoción dominante"})
+    if len(text.strip()) < 30:
+        return jsonify({"status": "error", "message": "Text too short"}), 400
 
-        guion = generar_guion_openai(texto, emocion)
-        fecha = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
-        mensaje = f"<b>AETHRUM</b>\n\n<b>Emoción:</b> {emocion.upper()}\n<b>Fecha:</b> {fecha}\n\n{guion}"
+    emotion, all_counts = detect_emotion(text)
+    prompt = generate_prompt(emotion, text)
+    script = send_to_openai(prompt)
 
-        enviar_a_telegram(mensaje)
-        return jsonify({"status": "ok", "emocion": emocion, "guion": guion})
+    if not script or len(script) < 20:
+        return jsonify({"status": "error", "message": "Script too short"}), 500
 
-    except Exception as e:
-        logging.error(f"Error en webhook: {e}")
-        return jsonify({"error": str(e)}), 500
-        if __name__ == "__main__":
-    import os
+    sent = send_to_telegram(f"<b>Emoción detectada:</b> {emotion.upper()}\n\n{script}")
+
+    return jsonify({
+        "status": "ok",
+        "emotion": emotion,
+        "counts": all_counts,
+        "message_sent": sent,
+        "script": script
+    })
+
+# Render compatibility
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
