@@ -108,6 +108,14 @@ def root_webhook():
         return jsonify({"status": "error", "message": "Text too short or failed to extract"}), 400
 
     emotion, scores = detect_emotion(text)
+
+    from datetime import datetime
+import csv
+
+today = datetime.utcnow().strftime("%Y-%m-%d")
+with open("registros.csv", "a", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([today, emotion])
     final_msg = generar_mensaje_emocional(emotion, scores, text, message if message.startswith("http") else None)
     send_to_telegram(final_msg)
 
