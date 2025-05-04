@@ -119,7 +119,8 @@ def route_not_found(e):
     from flask import request
     path = request.path
     ua = request.headers.get("User-Agent", "no-agent")
-    logging.warning(f"404 on path: {path} | UA: {ua}")
+    ip = request.remote_addr or "no-ip"
+    logging.warning(f"404 on path: {path} | UA: {ua} | IP: {ip}")
     return jsonify({"status": "error", "message": "Ruta no válida"}), 404
 
 
