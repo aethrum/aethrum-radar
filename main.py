@@ -82,13 +82,13 @@ def extraer_texto_de_url(url):
         @app.route("/", methods=["POST"])
 def recibir_noticia():
     data = request.get_json()
-    if not data or 'text' not in data:
-        return jsonify({"error": "No se recibió texto válido"}), 400
-
-    texto = data['text']
-    mensaje = analizar_texto(texto)
-    enviar_mensaje(mensaje)
-    return jsonify({"status": "ok"}), 200
+    url = data.get('url')
+    if url:
+        noticia = extraer_contenido(url)
+        emocion, mensaje = analizar_emocion_y_mensaje(noticia)
+        enviar_a_telegram(mensaje)
+        return jsonify({"status": "ok", "emocion": emocion})
+    return jsonify({"status": "error", "message": "URL no proporcionada"}), 400
 
     if not texto:
         return {"status": "error", "mensaje": "Texto vacío"}, 400
