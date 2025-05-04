@@ -100,26 +100,27 @@ def root_webhook():
     data = request.get_json()
     message = data.get("message")
 
-    if message == "/resumen":
-    try:
-        from collections import Counter
+        if message == "/resumen":
+        try:
+            from collections import Counter
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+            with open("registros.csv", "r") as f:
+                rows = [row for row in csv.reader(f) if row and row[0] == today]
+            total = len(rows)
+            emociones = [row[1] for row in rows]
+            conteo = Counter(emociones)
+            top3 = conteo.most_common(3)
 
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        with open("registros.csv", "r") as f:
-            rows = [row for row in csv.reader(f) if row and row[0] == today]
+            resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
+            for emo, cant in top3:
+                porcentaje = round((cant / total) * 100, 1)
+                resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
 
-        total = len(rows)
-        emociones = [row[1] for row in rows]
-        conteo = Counter(emociones)
-        top3 = conteo.most_common(3)
-
-        resumen = f"<b>#Resumen Diario</b>\nTotal analizadas: {total}\n"
-        for emo, cant in top3:
-            porcentaje = round((cant / total) * 100) if total else 0
-            resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
-
-        send_to_telegram(resumen)
-        return jsonify({"status": "ok", "resumen": resumen})
+            send_to_telegram(resumen)
+            return jsonify({"status": "ok", "resumen": resumen})
+        except Exception as e:
+            send_to_telegram("Error generando el resumen diario")
+            return jsonify({"status": "error", "message": str(e)}) 
 
     except Exception as e:
         send_to_telegram("Error generando el resumen.")
