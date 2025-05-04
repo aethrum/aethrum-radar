@@ -120,6 +120,12 @@ def route_not_found(e):
     path = request.path
     ua = request.headers.get("User-Agent", "no-agent")
     ip = request.remote_addr or "no-ip"
+
+    # Si detecta intento de usar el token como ruta, responde 403
+    if "7124925219" in path:
+        logging.warning(f"403 BLOCKED: path={path} | IP={ip} | UA={ua}")
+        return jsonify({"status": "forbidden", "message": "Ruta bloqueada"}), 403
+
     logging.warning(f"404 on path: {path} | UA: {ua} | IP: {ip}")
     return jsonify({"status": "error", "message": "Ruta no válida"}), 404
 
