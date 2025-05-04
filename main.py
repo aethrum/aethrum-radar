@@ -99,46 +99,53 @@ def send_to_telegram(message):
 def root_webhook():
     data = request.get_json()
     message = data.get("message")
-    
+
     if message == "/resumen":
         try:
             from collections import Counter
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        with open("registros.csv", "r") as f:
-            rows = [row for row in csv.reader(f)]
+            import csv
+            from datetime import datetime
 
-        total = len(rows)
-        emociones = [row[1] for row in rows]
-        conteo = Counter(emociones)
-        top3 = conteo.most_common(3)
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+            with open("registros.csv", "r") as f:
+                rows = [row for row in csv.reader(f)]
 
-        resumen = f"<b>#Resumen Diario</b>\nTotal registros: {total}\n"
-        for emo, cant in top3:
-            porcentaje = round((cant / total) * 100, 2)
-            resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
+            total = len(rows)
+            emociones = [row[1] for row in rows]
+            conteo = Counter(emociones)
+            top3 = conteo.most_common(3)
 
-        send_to_telegram(resumen)
-        return jsonify({"status": "ok", "resumen": resumen})
-    except Exception as e:
-        send_to_telegram("Error generando el resumen")
-        return jsonify({"status": "error", "message": str(e)})
+            resumen = f"<b>#Resumen Diario</b>\nTotal registros: {total}\n"
+            for emo, cant in top3:
+                porcentaje = round((cant / total) * 100, 2)
+                resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
 
             send_to_telegram(resumen)
             return jsonify({"status": "ok", "resumen": resumen})
         except Exception as e:
-            send_to_telegram("Error generando el resumen diario")
-            return jsonify({"status": "error", "message": str(e)}) 
-
-    except Exception as e:
-        send_to_telegram("Error generando el resumen.")
-        return jsonify({"status": "error", "message": "Resumen falló"}), 500
+            send_to_telegram("Error generando el resumen")
+            return jsonify({"status": "error", "message": str(e)})
 
     if not message:
-        return jsonify({"status": "error", "message": "Missing 'message' field"}), 400
+        return jsonify({"status": "error", "message": "Mensaje vacío"})
 
     text = message if not message.startswith("http") else extract_text_from_url(message)
     if not text or len(text.strip()) < 30:
-        return jsonify({"status": "error", "message": "Text too short or failed to extract"}), 400
+        return jsonify({"status": "error", "message": "Texto muy corto"})
+
+    emotion, scores = detect_emotion(text)
+
+    from datetime import datetime
+    import csv
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    with open("registros.csv", "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([today, emotion])
+
+    final_msg = generar_mensaje_emocional(emotion, scores, text, message if message.startswith("http") else None)
+    send_to_telegram(final_msg)
+
+    return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
 
     emotion, scores = detect_emotion(text)
 
