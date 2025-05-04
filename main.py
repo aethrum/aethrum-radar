@@ -142,7 +142,7 @@ def recibir():
     )
 
     if emocion_final == "DESCARTAR":
-        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>
+        mensaje = mensaje = f"<b>NOTICIA DESCARTADA</b>"
 No se detectó emoción clara.
 
 {texto}"
