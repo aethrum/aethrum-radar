@@ -17,23 +17,19 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN")  # Token para autenticar el webhook
 
-# Validar variables de entorno
 if not openai.api_key or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     logging.error("Faltan variables de entorno requeridas.")
     exit(1)
 
-# Flask app init
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Emotion keywords
 EMOTION_KEYWORDS = {
     "Dopamina": ["logro", "éxito", "recompensa", "motivación", "placer", "meta", "avance", "progreso", "superación", "triunfo",
                  "ambición", "reto", "desafío", "objetivo", "ganancia", "beneficio", "mejora", "crecimiento", "desarrollo", "innovación"],
     "Oxitocina": ["amor", "afecto", "cariño", "ternura", "empatía", "compasión", "solidaridad", "amistad", "confianza", "lealtad"]
 }
 
-# Utilidades
 def clean_text(text):
     return re.sub(r'[^a-zA-ZÀ-ÿ\s]', '', text).lower()
 
@@ -105,7 +101,6 @@ def send_to_telegram(message):
         logging.error(f"Telegram error: {e}")
         return False
 
-# Webhook
 @app.route("/webhook", methods=["POST"])
 def webhook():
     # Autenticación básica del webhook
@@ -148,7 +143,6 @@ def webhook():
         "script": script
     })
 
-# Render compatibility
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
