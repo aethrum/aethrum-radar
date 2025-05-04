@@ -45,6 +45,42 @@ def detect_emotion(text):
     dominant = max(scores, key=scores.get)
     return dominant, scores
 
+
+def generar_mensaje_emocional(emotion, scores, text, url=None):
+    total = sum(scores.values()) or 1
+    porcentajes = {k: round((v / total) * 100) for k, v in scores.items()}
+    ordenadas = sorted([(e, p) for e, p in porcentajes.items() if e != emotion], key=lambda x: x[1], reverse=True)
+
+    EMOJI = {
+        "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "☀️",
+        "Asombro": "🌟", "Adrenalina": "⚡️", "Feniletilamina": "💘",
+        "Norepinefrina": "🔥", "Anandamida": "🌈", "Acetilcolina": "🧠"
+    }
+
+    emoji = EMOJI.get(emotion, "")
+    relevancia = porcentajes[emotion]
+
+    estado = "✅ Noticia Aprobada" if relevancia >= 40 and emotion in [
+        "Dopamina", "Oxitocina", "Serotonina", "Asombro", "Anandamida", "Feniletilamina"
+    ] else "❌ Noticia Rechazada"
+
+    otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas[:3]])
+
+    fragmento = text.strip().replace("\n", " ")
+    fragmento = (fragmento[:300] + "...") if len(fragmento) > 300 else fragmento
+
+    mensaje = (
+        f"{estado} (Relevancia: {relevancia}%)\n\n"
+        f"<b>Emoción dominante:</b> {emoji} {emotion}\n"
+        f"<b>Relevancia emocional:</b> {relevancia}%\n\n"
+        f"<b>Otras emociones detectadas:</b>\n{otras}\n\n"
+        f"<b>Fragmento:</b>\n{fragmento}"
+    )
+
+    if url:
+        mensaje += f"\n\n🔗 {url}"
+
+    return mensaje
 def send_to_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -72,7 +108,7 @@ def root_webhook():
         return jsonify({"status": "error", "message": "Text too short or failed to extract"}), 400
 
     emotion, scores = detect_emotion(text)
-    final_msg = f"<b>Emotion Detected:</b> {emotion}\n\n{text[:300]}..."
+    final_msg = generar_mensaje_emocional(emotion, scores, text, message if message.startswith("http") else None)
     send_to_telegram(final_msg)
 
     return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
