@@ -20,7 +20,6 @@ PALABRAS_CLAVE = {
     "ASOMBRO": ["inesperado", "misterioso", "antiguo", "gigante", "colosal", "jamás visto"]
 }
 
-# Enviar mensaje a Telegram
 def enviar_telegram(mensaje):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -33,7 +32,6 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print("Error al enviar a Telegram:", e)
 
-# Análisis por palabras clave
 def analizar_palabras_clave(texto):
     texto = texto.lower()
     conteo = {emocion: 0 for emocion in PALABRAS_CLAVE}
@@ -44,7 +42,6 @@ def analizar_palabras_clave(texto):
     emocion_detectada = max(conteo, key=conteo.get)
     return emocion_detectada if conteo[emocion_detectada] > 0 else "DESCARTAR"
 
-# Evaluación emocional con OpenAI
 def evaluar_con_openai(texto):
     try:
         response = openai.chat.completions.create(
@@ -65,8 +62,6 @@ def evaluar_con_openai(texto):
         return response.choices[0].message.content.strip().upper()
     except Exception as e:
         return f"ERROR OPENAI: {e}"
-
-# Generación de guion emocional viral
 def generar_guion_emocional(texto, emocion):
     try:
         prompt = f"""
@@ -93,7 +88,6 @@ El guión debe ser humano, emocionante, y de alto impacto.
     except Exception as e:
         return f"[ERROR GUION] {e}"
 
-# Sugerencia de formato según emoción
 def sugerir_formato(emocion):
     if emocion == "DOPAMINA":
         return "Reel con subtítulos grandes y cortes rápidos"
@@ -106,7 +100,6 @@ def sugerir_formato(emocion):
     else:
         return "Formato no definido"
 
-# Extraer texto desde link
 def extraer_texto_desde_url(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -117,9 +110,7 @@ def extraer_texto_desde_url(url):
         return contenido.strip()[:4000]
     except Exception as e:
         return f"[ERROR LINK] {str(e)}"
-
-# Ruta principal
-@app.route("/", methods=["POST"])
+        @app.route("/", methods=["POST"])
 def recibir():
     data = request.get_json()
     texto = data.get("text", "").strip()
@@ -127,7 +118,6 @@ def recibir():
     if not texto:
         return {"status": "error", "message": "Texto vacío"}, 400
 
-    # Link o texto plano
     if texto.startswith("http"):
         procesado = extraer_texto_desde_url(texto)
     else:
@@ -142,10 +132,7 @@ def recibir():
     )
 
     if emocion_final == "DESCARTAR":
-        mensaje = mensaje = f"<b>NOTICIA DESCARTADA</b>"
-No se detectó emoción clara.
-
-mensaje = f"<b>NOTICIA:</b> {texto}"
+        mensaje = f"❌ <b>NOTICIA DESCARTADA</b>"
         enviar_telegram(mensaje)
         return {"status": "ok", "emocion": "DESCARTAR"}, 200
 
@@ -166,7 +153,5 @@ mensaje = f"<b>NOTICIA:</b> {texto}"
     enviar_telegram(mensaje)
     return {"status": "ok", "emocion": emocion_final}, 200
 
-# Ejecutar app
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
