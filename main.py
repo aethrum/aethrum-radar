@@ -100,7 +100,7 @@ def root_webhook():
     data = request.get_json()
     message = data.get("message")
 
-        if message == "/resumen":
+    if message == "/resumen":
     try:
         from collections import Counter
 
