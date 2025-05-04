@@ -3,127 +3,83 @@ import logging
 from flask import Flask, request, jsonify
 import requests
 from bs4 import BeautifulSoup
-import openai
 
-# Logging configuration
+# Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Flask app initialization
+# Flask app
 app = Flask(__name__)
 
-# Environment variables
+# Load env vars
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
 
-# Validate required environment variables
-required_vars = {"TELEGRAM_TOKEN": TELEGRAM_TOKEN, "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID, "OPENAI_API_KEY": OPENAI_API_KEY}
-missing_vars = [k for k, v in required_vars.items() if not v]
-if missing_vars:
-    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
+# Validate env vars
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    raise EnvironmentError("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID")
 
-# Emotion keywords dictionary
+# Emotion keywords (reducidos para prueba)
 EMOTION_KEYWORDS = {
-    "Dopamina": ["achievement", "success", "reward", "motivation", "pleasure", "goal", "discovery", "progress", "curiosity", "inspiration"],
-    "Oxitocina": ["love", "affection", "trust", "bond", "connection", "family", "friendship", "support", "compassion", "kindness"],
-    "Serotonina": ["peace", "balance", "gratitude", "calm", "well-being", "stability", "harmony", "order", "clarity", "serenity"],
-    "Asombro": ["amazing", "wonder", "epic", "unbelievable", "gigantic", "legendary", "magnificent", "mysterious", "discovery", "phenomenal"],
-    "Adrenalina": ["danger", "thrill", "intensity", "action", "explosive", "alert", "emergency", "crisis", "shock", "rescue"],
-    "Feniletilamina": ["passion", "romance", "love", "chemistry", "attraction", "desire", "infatuation", "flirt", "kiss", "crush"],
-    "Norepinefrina": ["focus", "alertness", "energy", "vitality", "determination", "strength", "drive", "efficiency", "power", "momentum"],
-    "Anandamida": ["calmness", "relaxation", "peace", "joy", "bliss", "balance", "harmony", "serenity", "contentment", "tranquility"],
-    "Acetilcolina": ["learning", "memory", "focus", "attention", "clarity", "strategy", "creativity", "problem-solving", "analysis", "logic"]
+    "Dopamina": ["success", "goal", "motivation", "reward", "pleasure"],
+    "Oxitocina": ["love", "trust", "family", "support", "bond"],
+    "Serotonina": ["peace", "gratitude", "calm", "balance", "clarity"],
+    "Asombro": ["amazing", "epic", "wonder", "mystery", "legendary"],
+    "Adrenalina": ["danger", "thrill", "shock", "emergency", "intensity"],
+    "Feniletilamina": ["romance", "passion", "chemistry", "kiss", "attraction"],
+    "Norepinefrina": ["energy", "drive", "focus", "power", "momentum"],
+    "Anandamida": ["bliss", "joy", "relaxation", "serenity", "calmness"],
+    "Acetilcolina": ["learning", "clarity", "memory", "focus", "strategy"]
 }
 
 def clean_text(text):
-    """Clean text by removing special characters and converting to lowercase."""
-    return ''.join([char if char.isalnum() or char.isspace() else '' for char in text]).lower()
+    return ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
 
 def extract_text_from_url(url):
-    """Scrape text content from a URL."""
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         return soup.get_text(separator=' ', strip=True)
     except Exception as e:
-        logging.error(f"Error extracting text from URL: {e}")
+        logging.error(f"Error extracting from URL: {e}")
         return None
 
 def detect_emotion(text):
-    """Detect the dominant emotion based on keyword frequency."""
-    word_list = clean_text(text).split()
-    counts = {emotion: sum(word_list.count(keyword) for keyword in keywords) for emotion, keywords in EMOTION_KEYWORDS.items()}
-    dominant_emotion = max(counts, key=counts.get)
-    return dominant_emotion, counts
-
-def generate_prompt(emotion, text):
-    """Generate a structured prompt for OpenAI."""
-    return (
-        f"Based on the following text:\n\n{text[:1000]}\n\n"
-        f"The dominant chemical emotion detected is {emotion}.\n\n"
-        "Generate a viral 17-second TikTok script divided into 5 blocks:\n"
-        "1. Emotional hook\n"
-        "2. Fast-paced development\n"
-        "3. Plot twist\n"
-        "4. Emotional resolution\n"
-        "5. Strong call-to-action\n\n"
-        "Include an emotional title and suggest an ideal visual format for social media."
-    )
-
-def send_to_openai(prompt):
-    """Send a prompt to OpenAI and retrieve the response."""
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=600
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        logging.error(f"Error communicating with OpenAI: {e}")
-        return None
+    words = clean_text(text).split()
+    scores = {emotion: sum(words.count(kw) for kw in kws) for emotion, kws in EMOTION_KEYWORDS.items()}
+    dominant = max(scores, key=scores.get)
+    return dominant, scores
 
 def send_to_telegram(message):
-    """Send a message to a Telegram chat."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
-        logging.info("Message sent to Telegram successfully.")
+        logging.info("Message sent to Telegram.")
     except Exception as e:
-        logging.error(f"Error sending message to Telegram: {e}")
+        logging.error(f"Telegram error: {e}")
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Handle POST requests to the /webhook endpoint."""
     data = request.get_json()
     if not data or ("texto" not in data and "url" not in data):
-        return jsonify({"status": "error", "message": "Invalid JSON payload"}), 400
+        return jsonify({"status": "error", "message": "Missing 'texto' or 'url'"}), 400
 
     text = data.get("texto") or extract_text_from_url(data.get("url"))
     if not text or len(text.strip()) < 30:
         return jsonify({"status": "error", "message": "Text too short for analysis"}), 400
 
-    emotion, counts = detect_emotion(text)
-    prompt = generate_prompt(emotion, text)
-    script = send_to_openai(prompt)
+    emotion, scores = detect_emotion(text)
+    message = f"<b>Detected Emotion:</b> {emotion}\n\nText sample:\n{text[:300]}..."
+    send_to_telegram(message)
 
-    if not script:
-        return jsonify({"status": "error", "message": "Failed to generate script"}), 500
-
-    send_to_telegram(f"<b>Dominant Emotion:</b> {emotion}\n\n{script}")
-
-    return jsonify({"status": "ok", "emotion": emotion, "counts": counts, "script": script})
+    return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-@app.route("/", methods=["GET"])
-def root():
-    return jsonify({"status": "ok", "message": "AETHRUM is live"}), 200
