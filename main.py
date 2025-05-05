@@ -61,16 +61,18 @@ def generar_mensaje_emocional(emotion, scores, text, url=None):
 
     emoji = EMOJI.get(emotion, "")
     relevancia = porcentajes[emotion]
+
     estado = "✅ Noticia Aprobada" if relevancia >= 25 and emotion in ["Dopamina", "Oxitocina", "Serotonina", "Asombro"] else "❌ Noticia Rechazada"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != emotion])
+    fragmento = text.strip().replace("\n", " ")
+    fragmento = fragmento[:300] + "..." if len(fragmento) > 300 else fragmento
 
-    fragmento = text.strip().replace("\n", " ")[:300]
     mensaje = (
         f"{estado} (Relevancia: {relevancia}%)\n"
         f"<b>Emoción dominante:</b> {emoji} {emotion}\n"
         f"<b>Relevancia emocional:</b> {relevancia}%\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n"
-        f"<b>Fragmento:</b>\n{fragmento}..."
+        f"<b>Fragmento:</b>\n{fragmento}"
     )
     if url:
         mensaje += f"\n\n{url}"
@@ -86,29 +88,27 @@ def send_to_telegram(message):
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
-        logging.info("Mensaje enviado a Telegram.")
+        logging.info("Message sent to Telegram.")
     except Exception as e:
-        logging.error(f"Error enviando a Telegram: {e}")
+        logging.error(f"Telegram error: {e}")
 
 @app.route("/", methods=["POST"])
 def recibir_webhook():
-    data = request.get_json()
-    logging.warning(f"Mensaje recibido: {data}")
+    try:
+        data = request.get_json()
+        logging.warning(f"Mensaje recibido: {data}")
 
-    # Detectar texto desde mensajes de canal
-    texto = None
-    if "message" in data:
-        texto = data["message"].get("text", "").strip()
-    elif "channel_post" in data:
-        texto = data["channel_post"].get("text", "").strip()
+        if isinstance(data, dict) and "channel_post" in data:
+            texto = data["channel_post"].get("text", "").strip().lower()
+        elif isinstance(data, dict) and "message" in data:
+            texto = data["message"].get("text", "").strip().lower()
+        else:
+            texto = data.get("message", "").strip().lower() if isinstance(data, dict) else ""
 
-    if not texto:
-        return jsonify({"status": "ignored", "message": "Sin texto en el mensaje"})
+        if texto == "/resumen":
+            if not os.path.exists("registros.csv"):
+                raise FileNotFoundError("registros.csv no encontrado")
 
-    texto = texto.lower()
-
-    if texto == "/resumen":
-        try:
             with open("registros.csv", "r") as f:
                 rows = [row for row in csv.reader(f)]
             total = len(rows)
@@ -123,37 +123,38 @@ def recibir_webhook():
 
             send_to_telegram(resumen)
             return jsonify({"status": "ok", "resumen": resumen})
-        except Exception as e:
-            logging.error(f"Error generando resumen: {e}")
-            return jsonify({"status": "error", "message": str(e)})
 
-    if not texto.startswith("http"):
-        return jsonify({"status": "ignored", "message": "No es un enlace"})
+        if not texto or not texto.startswith("http") or len(texto) < 30:
+            return jsonify({"status": "ignored", "message": "Invalid or no URL"})
 
-    if len(texto) < 30:
-        return jsonify({"status": "ignored", "message": "Enlace muy corto"})
+        text = extract_text_from_url(texto)
+        if not text:
+            return jsonify({"status": "error", "message": "Failed to extract text"})
 
-    texto_extraido = extract_text_from_url(texto)
-    if not texto_extraido:
-        return jsonify({"status": "error", "message": "No se pudo extraer texto"})
+        emotion, scores = detect_emotion(text)
+        today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    emotion, scores = detect_emotion(texto_extraido)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+        os.makedirs(os.path.dirname("registros.csv"), exist_ok=True)
+        if not os.path.exists("registros.csv"):
+            with open("registros.csv", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["fecha", "emocion"])
 
-    try:
         with open("registros.csv", "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([today, emotion])
-    except Exception as e:
-        logging.error(f"Error escribiendo CSV: {e}")
 
-    final_msg = generar_mensaje_emocional(emotion, scores, texto_extraido, url=texto)
-    send_to_telegram(final_msg)
-    return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
+        final_msg = generar_mensaje_emocional(emotion, scores, text, url=texto)
+        send_to_telegram(final_msg)
+        return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
+
+    except Exception as e:
+        logging.error(f"Error procesando webhook: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.errorhandler(404)
-def not_found(e):
-    return jsonify({"status": "error", "message": "Ruta no existe"}), 404
+def route_not_found(e):
+    return jsonify({"status": "error", "message": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
