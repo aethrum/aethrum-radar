@@ -95,21 +95,20 @@ def recibir_webhook():
         logging.warning(f"Mensaje recibido: {data}")
 
         texto = ""
-        if "message" in data:
-            if isinstance(data["message"], dict):
-                texto = data["message"].get("text", "")
-            elif isinstance(data["message"], str):
-                texto = data["message"]
-        elif "channel_post" in data:
-            if isinstance(data["channel_post"], dict):
-                texto = data["channel_post"].get("text", "")
-            elif isinstance(data["channel_post"], str):
-                texto = data["channel_post"]
+        if isinstance(data.get("message"), dict):
+            texto = data["message"].get("text", "")
+        elif isinstance(data.get("channel_post"), dict):
+            texto = data["channel_post"].get("text", "")
+        elif isinstance(data.get("message"), str):
+            texto = data["message"]
+        elif isinstance(data.get("channel_post"), str):
+            texto = data["channel_post"]
 
-        texto = texto.strip().lower()
+        texto = texto.strip()
 
-        if texto == "/resumen":
+        if texto.lower() == "/resumen":
             if not os.path.exists("registros.csv"):
+                logging.warning("Archivo CSV no existe")
                 send_to_telegram("⚠️ Aún no hay datos para mostrar un resumen.")
                 return jsonify({"status": "error", "message": "CSV no existe"})
 
@@ -128,10 +127,14 @@ def recibir_webhook():
             send_to_telegram(resumen)
             return jsonify({"status": "ok", "resumen": resumen})
 
-        if not texto.startswith("http") or len(texto) < 30:
+        palabras = texto.strip().split()
+        url = next((p for p in reversed(palabras) if p.startswith("http")), None)
+
+        if not url:
+            logging.warning("No se encontró una URL válida en el mensaje.")
             return jsonify({"status": "ignored", "message": "No hay URL válida"})
 
-        contenido = extract_text_from_url(texto)
+        contenido = extract_text_from_url(url)
         if not contenido:
             return jsonify({"status": "error", "message": "No se pudo extraer texto"})
 
@@ -141,7 +144,7 @@ def recibir_webhook():
         with open("registros.csv", "a", newline="") as f:
             csv.writer(f).writerow([hoy, emotion])
 
-        mensaje_final = generar_mensaje_emocional(emotion, scores, contenido, url=texto)
+        mensaje_final = generar_mensaje_emocional(emotion, scores, contenido, url=url)
         send_to_telegram(mensaje_final)
         return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
     except Exception as e:
