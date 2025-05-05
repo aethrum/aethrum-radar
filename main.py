@@ -29,6 +29,12 @@ EMOTION_KEYWORDS = {
     "Acetilcolina": ["learning", "clarity", "memory"],
 }
 
+EMOJI = {
+    "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "☀️",
+    "Asombro": "🌟", "Adrenalina": "⚡", "Feniletilamina": "💘",
+    "Norepinefrina": "🔥", "Anandamida": "🌈", "Acetilcolina": "📘"
+}
+
 def clean_text(text):
     return ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
 
@@ -52,12 +58,6 @@ def generar_mensaje_emocional(emotion, scores, text, url=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100) for k, v in scores.items()}
     ordenadas = sorted([(e, p) for e, p in porcentajes.items()], key=lambda x: -x[1])
-
-    EMOJI = {
-        "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "☀️",
-        "Asombro": "🌟", "Adrenalina": "⚡", "Feniletilamina": "💘",
-        "Norepinefrina": "🔥", "Anandamida": "🌈", "Acetilcolina": "📘"
-    }
 
     emoji = EMOJI.get(emotion, "")
     relevancia = porcentajes[emotion]
@@ -93,68 +93,64 @@ def send_to_telegram(message):
         logging.error(f"Telegram error: {e}")
 
 @app.route("/", methods=["POST"])
-def root_webhook():
+def webhook():
     try:
         data = request.get_json(force=True)
-        if not isinstance(data, dict):
-            logging.error("El cuerpo del POST no es un JSON válido")
-            return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+        if isinstance(data, str):
+            data = {"message": {"text": data}}
 
-        message = data.get("message", {}).get("text", "").strip().lower()
+        message = data.get("message", {}).get("text", "").strip()
         logging.warning(f"Mensaje recibido: {message}")
+
+        if message.lower() == "/resumen":
+            try:
+                with open("registros.csv", "r") as f:
+                    rows = [row for row in csv.reader(f)]
+                total = len(rows)
+                emociones = [row[1] for row in rows if len(row) > 1]
+                conteo = Counter(emociones)
+                top3 = conteo.most_common(3)
+
+                resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
+                for emo, cant in top3:
+                    porcentaje = round((cant / total) * 100)
+                    resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
+
+                send_to_telegram(resumen)
+                return jsonify({"status": "ok", "resumen": resumen})
+            except Exception as e:
+                logging.error(f"Error generando el resumen: {e}")
+                return jsonify({"status": "error", "message": str(e)})
+
+        if not message.startswith("http"):
+            return jsonify({"status": "ignored", "message": "No URL to process"})
+
+        if len(message.strip()) < 30:
+            return jsonify({"status": "ignored", "message": "Message too short"})
+
+        text = extract_text_from_url(message)
+        if not text:
+            return jsonify({"status": "error", "message": "Failed to extract text"})
+
+        emotion, scores = detect_emotion(text)
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+
+        try:
+            with open("registros.csv", "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([today, emotion])
+        except Exception as e:
+            logging.error(f"Error escribiendo CSV: {e}")
+
+        final_msg = generar_mensaje_emocional(emotion, scores, text, url=message)
+        send_to_telegram(final_msg)
+        return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
     except Exception as e:
-        logging.error(f"Error al procesar el mensaje: {e}")
+        logging.error(f"Error general en webhook: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-    if message == "/resumen":
-        try:
-            with open("registros.csv", "r") as f:
-                rows = [row for row in csv.reader(f)]
-            total = len(rows)
-            emociones = [row[1] for row in rows if len(row) > 1]
-            conteo = Counter(emociones)
-            top3 = conteo.most_common(3)
-
-            resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
-            for emo, cant in top3:
-                porcentaje = round((cant / total) * 100)
-                resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
-
-            send_to_telegram(resumen)
-            return jsonify({"status": "ok", "resumen": resumen})
-        except Exception as e:
-            logging.error(f"Error generando el resumen: {e}")
-            return jsonify({"status": "error", "message": str(e)})
-
-    if not message:
-        return jsonify({"status": "error", "message": "No message received"})
-
-    if not message.startswith("http"):
-        return jsonify({"status": "ignored", "message": "No URL to process"})
-
-    if len(message.strip()) < 30:
-        return jsonify({"status": "ignored", "message": "Message too short"})
-
-    text = extract_text_from_url(message)
-    if not text:
-        return jsonify({"status": "error", "message": "Failed to extract text"})
-
-    emotion, scores = detect_emotion(text)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-
-    try:
-        with open("registros.csv", "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([today, emotion])
-    except Exception as e:
-        logging.error(f"Error escribiendo CSV: {e}")
-
-    final_msg = generar_mensaje_emocional(emotion, scores, text, url=message)
-    send_to_telegram(final_msg)
-    return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
-
 @app.errorhandler(404)
-def route_not_found(e):
+def not_found(e):
     return jsonify({"status": "error", "message": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
