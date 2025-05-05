@@ -95,20 +95,21 @@ def recibir_webhook():
         logging.warning(f"Mensaje recibido: {data}")
 
         texto = ""
-        if isinstance(data.get("message"), dict):
-            texto = data["message"].get("text", "")
-        elif isinstance(data.get("channel_post"), dict):
-            texto = data["channel_post"].get("text", "")
-        elif isinstance(data.get("message"), str):
-            texto = data["message"]
-        elif isinstance(data.get("channel_post"), str):
-            texto = data["channel_post"]
+        if "message" in data:
+            if isinstance(data["message"], dict):
+                texto = data["message"].get("text", "")
+            elif isinstance(data["message"], str):
+                texto = data["message"]
+        elif "channel_post" in data:
+            if isinstance(data["channel_post"], dict):
+                texto = data["channel_post"].get("text", "")
+            elif isinstance(data["channel_post"], str):
+                texto = data["channel_post"]
 
         texto = texto.strip().lower()
 
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
-                logging.warning("Archivo CSV no existe")
                 send_to_telegram("⚠️ Aún no hay datos para mostrar un resumen.")
                 return jsonify({"status": "error", "message": "CSV no existe"})
 
