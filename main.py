@@ -8,6 +8,7 @@ import csv
 from collections import Counter
 
 logging.basicConfig(level=logging.INFO)
+
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -87,66 +88,68 @@ def send_to_telegram(message):
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
-        logging.info("Mensaje enviado a Telegram")
+        logging.info("Message sent to Telegram.")
     except Exception as e:
-        logging.error(f"Error enviando a Telegram: {e}")
+        logging.error(f"Telegram error: {e}")
 
 @app.route("/", methods=["POST"])
-def webhook():
+def root_webhook():
+    data = request.get_json()
+    logging.warning(f"Mensaje recibido: {data}")
+
+    message = data.get("message", "").strip()
+    if not message:
+        return jsonify({"status": "error", "message": "No message received"})
+
+    if message.lower() == "/resumen":
+        try:
+            with open("registros.csv", "r") as f:
+                rows = [row for row in csv.reader(f)]
+            total = len(rows)
+            emociones = [row[1] for row in rows if len(row) > 1]
+            conteo = Counter(emociones)
+            top3 = conteo.most_common(3)
+
+            resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
+            for emo, cant in top3:
+                porcentaje = round((cant / total) * 100)
+                resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
+
+            send_to_telegram(resumen)
+            return jsonify({"status": "ok", "resumen": resumen})
+        except Exception as e:
+            logging.error(f"Error generando el resumen: {e}")
+            return jsonify({"status": "error", "message": str(e)})
+
+    if "http" not in message:
+        return jsonify({"status": "ignored", "message": "No URL to process"})
+
+    parts = message.split(" - ")
+    url = parts[-1] if parts[-1].startswith("http") else None
+    if not url:
+        return jsonify({"status": "error", "message": "No URL found"})
+
+    text = extract_text_from_url(url)
+    if not text:
+        return jsonify({"status": "error", "message": "Failed to extract text"})
+
+    emotion, scores = detect_emotion(text)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
     try:
-        data = request.get_json(force=True)
-        logging.warning(f"Mensaje recibido: {data}")
-
-        message = ""
-        if isinstance(data, dict):
-            if "message" in data and isinstance(data["message"], str):
-                message = data["message"].strip()
-            elif "message" in data and isinstance(data["message"], dict):
-                message = data["message"].get("text", "").strip()
-        else:
-            return jsonify({"status": "error", "message": "Formato inválido"})
-
-        if message.lower() == "/resumen":
-            try:
-                with open("registros.csv", "r") as f:
-                    rows = [row for row in csv.reader(f)]
-                total = len(rows)
-                emociones = [row[1] for row in rows if len(row) > 1]
-                conteo = Counter(emociones)
-                top3 = conteo.most_common(3)
-
-                resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
-                for emo, cant in top3:
-                    porcentaje = round((cant / total) * 100)
-                    resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
-
-                send_to_telegram(resumen)
-                return jsonify({"status": "ok", "resumen": resumen})
-            except Exception as e:
-                logging.error(f"Error generando resumen: {e}")
-                return jsonify({"status": "error", "message": str(e)})
-
-        if not message or not message.lower().startswith("http"):
-            return jsonify({"status": "ignored", "message": "No se procesó ninguna URL"})
-
-        text = extract_text_from_url(message)
-        if not text:
-            return jsonify({"status": "error", "message": "No se pudo extraer el texto"})
-
-        emotion, scores = detect_emotion(text)
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-
         with open("registros.csv", "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([today, emotion])
-
-        final_msg = generar_mensaje_emocional(emotion, scores, text, url=message)
-        send_to_telegram(final_msg)
-        return jsonify({"status": "ok", "message": "Noticia procesada", "emotion": emotion})
-
     except Exception as e:
-        logging.error(f"Error general: {e}")
-        return jsonify({"status": "error", "message": str(e)})
+        logging.error(f"Error escribiendo CSV: {e}")
+
+    final_msg = generar_mensaje_emocional(emotion, scores, text, url=url)
+    send_to_telegram(final_msg)
+    return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
+
+@app.errorhandler(404)
+def route_not_found(e):
+    return jsonify({"status": "error", "message": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
