@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    raise EnvironmentError("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID environment variable")
+    raise EnvironmentError("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID")
 
 EMOTION_KEYWORDS = {
     "Dopamina": ["success", "goal", "motivation"],
@@ -64,7 +64,8 @@ def generar_mensaje_emocional(emotion, scores, text, url=None):
     estado = "✅ Noticia Aprobada" if relevancia >= 20 and emotion in ["Dopamina", "Oxitocina", "Serotonina"] else "❌ Noticia Rechazada"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != emotion])
     fragmento = text.strip().replace("\n", " ")
-    fragmento = fragmento[:300] + "..." if len(fragmento) > 300 else fragmento
+    if len(fragmento) > 300:
+        fragmento = fragmento[:300] + "..."
 
     mensaje = (
         f"{estado} (Relevancia: {relevancia}%)\n\n"
@@ -91,24 +92,33 @@ def send_to_telegram(message):
 def root_webhook():
     data = request.get_json()
     message = data.get("message")
+    logging.info(f"Mensaje recibido: {message}")
 
     if message and message.strip().lower().startswith("/resumen"):
+        logging.info("Entrando al bloque /resumen")
         try:
             today = datetime.utcnow().strftime("%Y-%m-%d")
             with open("registros.csv", "r") as f:
                 rows = [row for row in csv.reader(f) if row and row[0] == today]
+            if not rows:
+                send_to_telegram("Aún no hay registros hoy para generar un resumen.")
+                return jsonify({"status": "ok", "resumen": "vacío"})
+
             total = len(rows)
             emociones = [row[1] for row in rows]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
+
             resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
             for emo, cant in top3:
                 porcentaje = round((cant / total) * 100)
                 resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
+
             send_to_telegram(resumen)
             return jsonify({"status": "ok", "resumen": resumen})
         except Exception as e:
-            send_to_telegram("Error generando el resumen")
+            logging.error(f"Error generando resumen: {e}")
+            send_to_telegram("Error generando el resumen.")
             return jsonify({"status": "error", "message": str(e)})
 
     if not message:
@@ -120,22 +130,25 @@ def root_webhook():
 
     emotion, scores = detect_emotion(text)
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    with open("registros.csv", "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([today, emotion])
+    try:
+        with open("registros.csv", "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([today, emotion])
+    except Exception as e:
+        logging.error(f"Error guardando CSV: {e}")
+
     final_msg = generar_mensaje_emocional(emotion, scores, text, url=message if message.startswith("http") else None)
     send_to_telegram(final_msg)
     return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
 
 @app.errorhandler(404)
 def route_not_found(e):
-    from flask import request
     path = request.path
     ua = request.headers.get("User-Agent", "no-agent")
     ip = request.remote_addr or "no-ip"
     if "7124925219" in path:
         logging.warning(f"403 BLOCKED: path={path} | UA={ua} | IP={ip}")
-        return jsonify({"status": "forbidden", "message": "Access Denied"})
+        return jsonify({"status": "forbidden", "message": "Access Denied"}), 403
     logging.warning(f"404 on path: {path} | UA={ua} | IP={ip}")
     return jsonify({"status": "error", "message": "Ruta no encontrada"})
 
