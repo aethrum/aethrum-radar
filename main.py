@@ -7,19 +7,21 @@ from datetime import datetime
 import csv
 from collections import Counter
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    raise EnvironmentError("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID in environment.")
+    raise EnvironmentError("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID environment variable")
 
 EMOTION_KEYWORDS = {
     "Dopamina": ["success", "goal", "motivation"],
-    "Oxitocina": ["love", "trust", "family", "safe"],
+    "Oxitocina": ["love", "trust", "family"],
     "Serotonina": ["peace", "gratitude", "calm"],
-    "Asombro": ["amazing", "epic", "wonder", "miracle"],
+    "Asombro": ["amazing", "epic", "wonder"],
     "Adrenalina": ["danger", "thrill", "shock"],
     "Feniletilamina": ["romance", "passion", "crush"],
     "Norepinefrina": ["energy", "drive", "focus"],
@@ -49,43 +51,35 @@ def detect_emotion(text):
 def generar_mensaje_emocional(emotion, scores, text, url=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100) for k, v in scores.items()}
-    ordenadas = sorted([(e, p) for e, p in porcentajes.items() if e != emotion], key=lambda x: -x[1])
+    ordenadas = sorted([(e, p) for e, p in porcentajes.items()], key=lambda x: -x[1])
 
     EMOJI = {
-        "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "☀️", "Asombro": "🌟",
-        "Adrenalina": "⚡", "Feniletilamina": "💕", "Norepinefrina": "🔥",
-        "Anandamida": "🌈", "Acetilcolina": "🧠"
+        "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "☮️",
+        "Asombro": "🌟", "Adrenalina": "⚡", "Feniletilamina": "💕",
+        "Norepinefrina": "🔥", "Anandamida": "🌈", "Acetilcolina": "🧠"
     }
 
     emoji = EMOJI.get(emotion, "")
     relevancia = porcentajes[emotion]
-
-    estado = "✅ Noticia Aprobada" if relevancia >= 40 and emotion in ["Dopamina", "Oxitocina", "Serotonina"] else "❌ Noticia Rechazada"
-    otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas[:3]])
-
+    estado = "✅ Noticia Aprobada" if relevancia >= 20 and emotion in ["Dopamina", "Oxitocina", "Serotonina"] else "❌ Noticia Rechazada"
+    otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != emotion])
     fragmento = text.strip().replace("\n", " ")
     fragmento = fragmento[:300] + "..." if len(fragmento) > 300 else fragmento
 
     mensaje = (
-        f"{estado} (Relevancia: {relevancia}%)\n"
+        f"{estado} (Relevancia: {relevancia}%)\n\n"
         f"<b>Emoción dominante:</b> {emoji} {emotion}\n"
         f"<b>Relevancia emocional:</b> {relevancia}%\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n\n"
         f"<b>Fragmento:</b>\n{fragmento}"
     )
-
     if url:
         mensaje += f"\n\n🔗 {url}"
-
     return mensaje
 
 def send_to_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
@@ -98,49 +92,39 @@ def root_webhook():
     data = request.get_json()
     message = data.get("message")
 
-        if message and message.strip().lower().startswith("/resumen"):
+    if message and message.strip().lower().startswith("/resumen"):
         try:
             today = datetime.utcnow().strftime("%Y-%m-%d")
             with open("registros.csv", "r") as f:
                 rows = [row for row in csv.reader(f) if row and row[0] == today]
-
-            if not rows:
-                send_to_telegram("Aún no hay registros hoy para generar un resumen.")
-                return jsonify({"status": "ok", "resumen": "vacío"})
-
             total = len(rows)
             emociones = [row[1] for row in rows]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
-
-            resumen = f"<b>#Resumen Diario</b>\nTotal registros: {total}\n"
+            resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
             for emo, cant in top3:
                 porcentaje = round((cant / total) * 100)
                 resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
-
             send_to_telegram(resumen)
             return jsonify({"status": "ok", "resumen": resumen})
         except Exception as e:
-            send_to_telegram("Error generando el resumen diario.")
+            send_to_telegram("Error generando el resumen")
             return jsonify({"status": "error", "message": str(e)})
 
     if not message:
-        return jsonify({"status": "error", "message": "Empty message"})
+        return jsonify({"status": "error", "message": "No message"})
 
     text = message if not message.startswith("http") else extract_text_from_url(message)
     if not text or len(text.strip()) < 30:
-        return jsonify({"status": "error", "message": "Invalid or short text"})
+        return jsonify({"status": "error", "message": "Texto vacío o muy corto"})
 
     emotion, scores = detect_emotion(text)
-
     today = datetime.utcnow().strftime("%Y-%m-%d")
     with open("registros.csv", "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([today, emotion])
-
-    final_msg = generar_mensaje_emocional(emotion, scores, text, message if message.startswith("http") else None)
+    final_msg = generar_mensaje_emocional(emotion, scores, text, url=message if message.startswith("http") else None)
     send_to_telegram(final_msg)
-
     return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
 
 @app.errorhandler(404)
@@ -149,13 +133,11 @@ def route_not_found(e):
     path = request.path
     ua = request.headers.get("User-Agent", "no-agent")
     ip = request.remote_addr or "no-ip"
-
     if "7124925219" in path:
-        logging.warning(f"403 BLOCKED: path={path} | IP={ip}")
-        return jsonify({"status": "forbidden", "message": "blocked"}), 403
-
-    logging.warning(f"404 on path: {path} | UA={ua}")
-    return jsonify({"status": "error", "message": "Route not found"}), 404
+        logging.warning(f"403 BLOCKED: path={path} | UA={ua} | IP={ip}")
+        return jsonify({"status": "forbidden", "message": "Access Denied"})
+    logging.warning(f"404 on path: {path} | UA={ua} | IP={ip}")
+    return jsonify({"status": "error", "message": "Ruta no encontrada"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
