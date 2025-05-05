@@ -98,18 +98,22 @@ def root_webhook():
     data = request.get_json()
     message = data.get("message")
 
-    if message == "/resumen":
+        if message and message.strip().lower().startswith("/resumen"):
         try:
             today = datetime.utcnow().strftime("%Y-%m-%d")
             with open("registros.csv", "r") as f:
                 rows = [row for row in csv.reader(f) if row and row[0] == today]
+
+            if not rows:
+                send_to_telegram("Aún no hay registros hoy para generar un resumen.")
+                return jsonify({"status": "ok", "resumen": "vacío"})
 
             total = len(rows)
             emociones = [row[1] for row in rows]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
 
-            resumen = f"<b>#Resumen Diario</b>\nTotal: {total}\n"
+            resumen = f"<b>#Resumen Diario</b>\nTotal registros: {total}\n"
             for emo, cant in top3:
                 porcentaje = round((cant / total) * 100)
                 resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
