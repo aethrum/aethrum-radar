@@ -51,7 +51,7 @@ def detect_emotion(text):
 def generar_mensaje_emocional(emotion, scores, text, url=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100) for k, v in scores.items()}
-    ordenadas = sorted([(e, p) for e, p in porcentajes.items()], key=lambda x: -x[1])
+    ordenadas = sorted(porcentajes.items(), key=lambda x: -x[1])
 
     EMOJI = {
         "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "☀️",
@@ -61,9 +61,9 @@ def generar_mensaje_emocional(emotion, scores, text, url=None):
 
     emoji = EMOJI.get(emotion, "")
     relevancia = porcentajes[emotion]
-
     estado = "✅ Noticia Aprobada" if relevancia >= 25 and emotion in ["Dopamina", "Oxitocina", "Serotonina", "Asombro"] else "❌ Noticia Rechazada"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != emotion])
+
     fragmento = text.strip().replace("\n", " ")
     fragmento = fragmento[:300] + "..." if len(fragmento) > 300 else fragmento
 
@@ -88,23 +88,26 @@ def send_to_telegram(message):
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
-        logging.info("Message sent to Telegram.")
+        logging.info("Mensaje enviado a Telegram.")
     except Exception as e:
-        logging.error(f"Telegram error: {e}")
+        logging.error(f"Error enviando a Telegram: {e}")
 
 @app.route("/", methods=["POST"])
-def root_webhook():
+def webhook():
     data = request.get_json()
     message = data.get("message", {}).get("text", "").strip().lower()
     logging.warning(f"Mensaje recibido: {message}")
 
     if message == "/resumen":
         try:
+            if not os.path.exists("registros.csv"):
+                send_to_telegram("No hay registros aún para resumir.")
+                return jsonify({"status": "ok", "message": "CSV vacío"})
+
             with open("registros.csv", "r") as f:
-                rows = [row for row in csv.reader(f)]
+                rows = [row for row in csv.reader(f) if len(row) > 1]
             total = len(rows)
-            emociones = [row[1] for row in rows if len(row) > 1]
-            conteo = Counter(emociones)
+            conteo = Counter([r[1] for r in rows])
             top3 = conteo.most_common(3)
 
             resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}\n"
@@ -115,21 +118,18 @@ def root_webhook():
             send_to_telegram(resumen)
             return jsonify({"status": "ok", "resumen": resumen})
         except Exception as e:
-            logging.error(f"Error generando el resumen: {e}")
+            logging.error(f"Error al generar resumen: {e}")
             return jsonify({"status": "error", "message": str(e)})
 
-    if not message:
-        return jsonify({"status": "error", "message": "No message received"})
-
     if not message.startswith("http"):
-        return jsonify({"status": "ignored", "message": "No URL to process"})
+        return jsonify({"status": "ignored", "message": "No URL para analizar"})
 
     if len(message.strip()) < 30:
-        return jsonify({"status": "ignored", "message": "Message too short"})
+        return jsonify({"status": "ignored", "message": "Texto muy corto"})
 
     text = extract_text_from_url(message)
     if not text:
-        return jsonify({"status": "error", "message": "Failed to extract text"})
+        return jsonify({"status": "error", "message": "No se pudo extraer texto"})
 
     emotion, scores = detect_emotion(text)
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -146,7 +146,7 @@ def root_webhook():
     return jsonify({"status": "ok", "emotion": emotion, "scores": scores})
 
 @app.errorhandler(404)
-def route_not_found(e):
+def not_found(e):
     return jsonify({"status": "error", "message": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
