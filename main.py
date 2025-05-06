@@ -43,10 +43,7 @@ def extract_text_from_url(url):
 
 def detect_emotion(text, keywords_dict):
     words = clean_text(text).split()
-    scores = {
-        emotion: sum(words.count(kw) for kw in kws)
-        for emotion, kws in keywords_dict.items()
-    }
+    scores = {emotion: sum(words.count(kw) for kw in kws) for emotion, kws in keywords_dict.items()}
     dominante = max(scores, key=scores.get, default=None)
     return dominante, scores
 
@@ -64,7 +61,6 @@ def generar_mensaje_emocional(dominante, scores, text, url=None):
     estado = "✅ Noticia Aprobada" if relevancia > 15 else "⚠️ Noticia con baja relevancia"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != dominante])
     fragmento = text.strip().replace("\n", " ")[:300]
-
     mensaje = (
         f"{estado} (Relevancia: {relevancia}%)\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
@@ -93,21 +89,16 @@ def send_to_telegram(message):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         logging.warning(f"Mensaje recibido: {data}")
-
-        # NUEVO MANEJO ROBUSTO
         texto = ""
-        if "message" in data:
-            texto = data["message"].get("text", "")
-        elif "channel_post" in data:
-            texto = data["channel_post"].get("text", "")
-        else:
-            logging.warning("No se encontró texto válido en el webhook")
-            return jsonify({"status": "ignored"})
-
-        texto = str(texto).strip()
-
+        if isinstance(data, str):
+            texto = data.strip()
+        elif isinstance(data, dict):
+            texto = data.get("message") or data.get("text", "")
+            if isinstance(texto, dict):
+                texto = texto.get("text", "")
+            texto = str(texto or "").strip()
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
                 send_to_telegram("⚠️ Aún no hay datos para mostrar un resumen.")
@@ -118,31 +109,25 @@ def recibir_webhook():
             emociones = [row[1] for row in rows if len(row) > 1]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
-            resumen = f"<b>#Resumen Diario</b>\n\n"
+            resumen = "<b>#Resumen Diario</b>\n\n"
             for emo, cant in top3:
                 porcentaje = round((cant / total) * 100, 2)
                 resumen += f"- {emo}: {porcentaje}%\n"
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
-
         if not texto.startswith("http") or "://" not in texto:
             return jsonify({"status": "ignorado"})
-
         contenido = extract_text_from_url(texto)
         if not contenido:
             return jsonify({"status": "error", "msg": "No se pudo extraer el texto"})
-
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
         with open("registros.csv", "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([hoy, emocion])
-
         mensaje = generar_mensaje_emocional(emocion, scores, contenido, texto)
         send_to_telegram(mensaje)
         return jsonify({"status": "ok", "emocion": emocion})
-
     except Exception as e:
         logging.error(f"Error procesando el webhook: {e}")
         return jsonify({"status": "error", "msg": str(e)})
