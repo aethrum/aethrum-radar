@@ -90,6 +90,7 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
+
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
@@ -97,11 +98,17 @@ def recibir_webhook():
 
         msg = data.get("message", "")
         if isinstance(msg, dict):
-            texto = msg.get("text", "").strip()
+            texto = msg.get("text", "")
         else:
-            texto = str(msg).strip()
+            texto = str(msg)
 
-        if texto == "/resumen":
+        texto = texto.strip()
+
+        if not texto:
+            logging.warning("Mensaje vacío o sin texto")
+            return jsonify({"status": "ignorado"})
+
+        if texto.lower() == "/resumen":
             if not os.path.exists("registros.csv"):
                 send_to_telegram("⚠️ Aún no hay datos para mostrar un resumen.")
                 return jsonify({"status": "ok"})
@@ -118,7 +125,8 @@ def recibir_webhook():
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
-        if not texto.startswith("http"):
+        if not texto.lower().startswith("http"):
+            logging.warning(f"Texto ignorado por no ser URL válida: {texto}")
             return jsonify({"status": "ignorado"})
 
         contenido = extract_text_from_url(texto)
@@ -144,5 +152,5 @@ def ruta_no_encontrada(e):
     return jsonify({"status": "error", "msg": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 10000))  # Render lo inyecta dinámicamente
     app.run(host="0.0.0.0", port=port)
