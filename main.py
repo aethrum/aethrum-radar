@@ -90,7 +90,6 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
-
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
@@ -102,8 +101,7 @@ def recibir_webhook():
         else:
             texto = str(msg)
 
-        texto = texto.strip()
-
+        texto = texto.strip().replace("\n", " ")
         if not texto:
             logging.warning("Mensaje vacío o sin texto")
             return jsonify({"status": "ignorado"})
@@ -125,11 +123,15 @@ def recibir_webhook():
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
-        if not texto.lower().startswith("http"):
-            logging.warning(f"Texto ignorado por no ser URL válida: {texto}")
+        # Extrae URL si está dentro del texto
+        palabras = texto.split()
+        urls = [p for p in palabras if p.startswith("http")]
+        if not urls:
+            logging.warning(f"Texto ignorado por no contener URL válida: {texto}")
             return jsonify({"status": "ignorado"})
+        url = urls[0]
 
-        contenido = extract_text_from_url(texto)
+        contenido = extract_text_from_url(url)
         if not contenido:
             return jsonify({"status": "error", "msg": "No se pudo extraer el texto"})
 
@@ -139,7 +141,7 @@ def recibir_webhook():
         with open("registros.csv", "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([hoy, emocion])
 
-        mensaje = generar_mensaje_emocional(emocion, scores, contenido, texto)
+        mensaje = generar_mensaje_emocional(emocion, scores, contenido, url)
         send_to_telegram(mensaje)
         return jsonify({"status": "ok", "emocion": emocion})
 
@@ -152,5 +154,5 @@ def ruta_no_encontrada(e):
     return jsonify({"status": "error", "msg": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Render lo inyecta dinámicamente
+    port = int(os.environ.get("PORT", 10000))  # Render injecta dinámicamente el puerto
     app.run(host="0.0.0.0", port=port)
