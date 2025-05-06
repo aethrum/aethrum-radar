@@ -24,7 +24,7 @@ def cargar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
             nombre = archivo.replace(".json", "")
-            with open(os.path.join(EMOTION_DIR, archivo), encoding="utf-8") as f:
+            with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
                 emociones[nombre] = json.load(f)
     return emociones
 
@@ -51,28 +51,24 @@ def detect_emotion(text, keywords_dict):
     return dominante, scores
 
 EMOJI = {
-    "Dopamina": "✨",
-    "Oxitocina": "❤️",
-    "Asombro": "🌟",
-    "Adrenalina": "⚡️",
-    "Norepinefrina": "🔥",
-    "Anandamida": "🌀"
+    "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
+    "Adrenalina": "⚡", "Norepinefrina": "🔥", "Anandamida": "🧠"
 }
 
 def generar_mensaje_emocional(dominante, scores, text, url=""):
     total = sum(scores.values()) or 1
-    porcentajes = {k: round((v / total) * 100, 1) for k, v in scores.items()}
+    porcentajes = {k: round((v / total) * 100) for k, v in scores.items()}
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
     relevancia = porcentajes[dominante]
-    estado = "✅ Noticia Aprobada" if relevancia >= 50 else "❌ Relevancia baja"
-    otras = "\n".join([f"- {k}: {v}%" for k, v in ordenadas if k != dominante])
-    fragmento = text.strip().replace("\n", " ")[:600]
+    estado = "✅ Noticia Aprobada" if relevancia >= 40 else "⚠️ Noticia Neutral"
+    otras = "\n".join(f"- {e}: {p}%" for e, p in ordenadas if e != dominante)
+    fragmento = text.strip().replace("\n", " ")[:500]
     mensaje = (
         f"{estado} (Relevancia: {relevancia}%)\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
         f"<b>Relevancia emocional:</b> {relevancia}%\n"
-        f"<b>Otras emociones detectadas:</b>\n{otras}\n\n"
+        f"<b>Otras emociones detectadas:</b>\n{otras}\n"
         f"<b>Fragmento:</b>\n{fragmento}"
     )
     if url:
@@ -83,19 +79,17 @@ def send_to_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
         logging.info("Mensaje enviado a Telegram")
     except Exception as e:
         logging.error(f"Error enviando a Telegram: {e}")
-        raise
 
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     try:
         data = request.get_json()
         logging.warning(f"Mensaje recibido: {data}")
-
         texto = data.get("message") or data.get("text", "")
         if isinstance(texto, dict):
             texto = texto.get("text", "")
@@ -111,33 +105,32 @@ def recibir_webhook():
             emociones = [row[1] for row in rows]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
-            resumen = f"<b>#Resumen Diario</b>\n"
+            resumen = "<b>#Resumen Diario de Emociones</b>\n"
             for emo, cant in top3:
-                porcentaje = round((cant / total) * 100, 1)
+                porcentaje = round((cant / total) * 100)
                 resumen += f"- {emo}: {porcentaje}%\n"
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
-        if not texto.startswith("http"):
-            return jsonify({"status": "ignorado", "razón": "no es URL"})
+        if not texto.startswith("http") or "://" not in texto:
+            return jsonify({"status": "ignorado", "motivo": "No es una URL"})
 
         contenido = extract_text_from_url(texto)
         if not contenido:
-            return jsonify({"status": "error", "razón": "no se pudo extraer texto"})
+            return jsonify({"status": "error", "motivo": "No se pudo extraer el texto"})
 
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with open("registros.csv", "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([hoy, emocion])
-
         mensaje = generar_mensaje_emocional(emocion, scores, contenido, texto)
         send_to_telegram(mensaje)
         return jsonify({"status": "ok", "emocion": emocion})
 
     except Exception as e:
-        logging.error(f"Error procesando webhook: {e}")
-        return jsonify({"status": "error", "razón": str(e)})
+        logging.error(f"Error procesando el webhook: {e}")
+        return jsonify({"status": "error", "motivo": str(e)})
 
 @app.errorhandler(404)
 def ruta_no_encontrada(e):
