@@ -61,9 +61,7 @@ def generar_mensaje_emocional(dominante, scores, text, url=None):
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
     relevancia = porcentajes.get(dominante, 0)
-
     estado = "✅ Noticia Aprobada" if relevancia > 15 else "⚠️ Noticia con baja relevancia"
-
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != dominante])
     fragmento = text.strip().replace("\n", " ")[:300]
 
@@ -97,10 +95,18 @@ def recibir_webhook():
     try:
         data = request.get_json()
         logging.warning(f"Mensaje recibido: {data}")
-        texto = data.get("message") or data.get("text", "")
-        if isinstance(texto, dict):
-            texto = texto.get("text", "")
-        texto = str(texto or "").strip()
+
+        # NUEVO MANEJO ROBUSTO
+        texto = ""
+        if "message" in data:
+            texto = data["message"].get("text", "")
+        elif "channel_post" in data:
+            texto = data["channel_post"].get("text", "")
+        else:
+            logging.warning("No se encontró texto válido en el webhook")
+            return jsonify({"status": "ignored"})
+
+        texto = str(texto).strip()
 
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
@@ -129,12 +135,14 @@ def recibir_webhook():
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
         with open("registros.csv", "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([hoy, emocion])
 
         mensaje = generar_mensaje_emocional(emocion, scores, contenido, texto)
         send_to_telegram(mensaje)
         return jsonify({"status": "ok", "emocion": emocion})
+
     except Exception as e:
         logging.error(f"Error procesando el webhook: {e}")
         return jsonify({"status": "error", "msg": str(e)})
@@ -145,4 +153,4 @@ def ruta_no_encontrada(e):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)p
