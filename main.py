@@ -95,7 +95,11 @@ def recibir_webhook():
         except json.JSONDecodeError:
             data = {"message": raw_data.strip()}
 
-        texto = data.get("message", "").strip()
+        msg = data.get("message", "")
+        if isinstance(msg, dict):
+            texto = msg.get("text", "").strip()
+        else:
+            texto = str(msg).strip()
 
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
@@ -140,5 +144,5 @@ def ruta_no_encontrada(e):
     return jsonify({"status": "error", "msg": "Ruta no encontrada"}), 404
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Cambiado a 10000 por Render
+    port = int(os.environ.get("PORT", 10000))  # Asegurado que usa el puerto 10000
     app.run(host="0.0.0.0", port=port)
