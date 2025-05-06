@@ -89,16 +89,25 @@ def send_to_telegram(message):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     try:
-        data = request.get_json(force=True)
+        try:
+            data = request.get_json(force=True)
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except:
+                    data = {"message": data}
+            elif not isinstance(data, dict):
+                data = {}
+        except Exception as e:
+            logging.error(f"Error cargando JSON: {e}")
+            data = {}
+
         logging.warning(f"Mensaje recibido: {data}")
-        texto = ""
-        if isinstance(data, str):
-            texto = data.strip()
-        elif isinstance(data, dict):
-            texto = data.get("message") or data.get("text", "")
-            if isinstance(texto, dict):
-                texto = texto.get("text", "")
-            texto = str(texto or "").strip()
+        texto = data.get("message") or data.get("text", "")
+        if isinstance(texto, dict):
+            texto = texto.get("text", "")
+        texto = str(texto or "").strip()
+
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
                 send_to_telegram("⚠️ Aún no hay datos para mostrar un resumen.")
@@ -115,11 +124,14 @@ def recibir_webhook():
                 resumen += f"- {emo}: {porcentaje}%\n"
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
+
         if not texto.startswith("http") or "://" not in texto:
             return jsonify({"status": "ignorado"})
+
         contenido = extract_text_from_url(texto)
         if not contenido:
             return jsonify({"status": "error", "msg": "No se pudo extraer el texto"})
+
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
