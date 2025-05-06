@@ -95,10 +95,13 @@ def recibir_webhook():
         except json.JSONDecodeError:
             data = {}
 
-        # Soporte para message o channel_post
-        msg_data = data.get("message") or data.get("channel_post") or {}
-        texto = msg_data.get("text", "").strip().replace("\n", " ")
+        msg_container = data.get("message") or data.get("channel_post") or ""
+        if isinstance(msg_container, dict):
+            texto = msg_container.get("text", "")
+        else:
+            texto = str(msg_container)
 
+        texto = texto.strip().replace("\n", " ")
         if not texto:
             logging.warning("Mensaje vacío o sin texto")
             return jsonify({"status": "ignorado"})
