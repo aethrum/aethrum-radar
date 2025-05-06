@@ -13,11 +13,10 @@ app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+EMOTION_DIR = "emociones"
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
-
-EMOTION_DIR = "emociones"
 
 def cargar_keywords():
     emociones = {}
@@ -89,24 +88,14 @@ def send_to_telegram(message):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     try:
+        raw_data = request.get_data(as_text=True)
+        logging.warning(f"Raw recibido: {raw_data}")
         try:
-            data = request.get_json(force=True)
-            if isinstance(data, str):
-                try:
-                    data = json.loads(data)
-                except:
-                    data = {"message": data}
-            elif not isinstance(data, dict):
-                data = {}
-        except Exception as e:
-            logging.error(f"Error cargando JSON: {e}")
-            data = {}
+            data = json.loads(raw_data)
+        except json.JSONDecodeError:
+            data = {"message": raw_data.strip()}
 
-        logging.warning(f"Mensaje recibido: {data}")
-        texto = data.get("message") or data.get("text", "")
-        if isinstance(texto, dict):
-            texto = texto.get("text", "")
-        texto = str(texto or "").strip()
+        texto = data.get("message", "").strip()
 
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
@@ -125,7 +114,7 @@ def recibir_webhook():
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
-        if not texto.startswith("http") or "://" not in texto:
+        if not texto.startswith("http"):
             return jsonify({"status": "ignorado"})
 
         contenido = extract_text_from_url(texto)
@@ -137,9 +126,11 @@ def recibir_webhook():
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with open("registros.csv", "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([hoy, emocion])
+
         mensaje = generar_mensaje_emocional(emocion, scores, contenido, texto)
         send_to_telegram(mensaje)
         return jsonify({"status": "ok", "emocion": emocion})
+
     except Exception as e:
         logging.error(f"Error procesando el webhook: {e}")
         return jsonify({"status": "error", "msg": str(e)})
