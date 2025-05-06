@@ -24,21 +24,21 @@ def cargar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
             nombre = archivo.replace(".json", "")
-            with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
+            with open(os.path.join(EMOTION_DIR, archivo), encoding="utf-8") as f:
                 emociones[nombre] = json.load(f)
     return emociones
 
 def clean_text(text):
-    return ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
+    return ''.join(c.lower() if c.isalnum() else ' ' for c in text)
 
 def extract_text_from_url(url):
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
-        return soup.get_text(separator=' ')
+        return soup.get_text(separator=' ', strip=True)
     except Exception as e:
-        logging.error(f"Error extrayendo texto: {e}")
+        logging.error(f"Error extrayendo contenido: {e}")
         return None
 
 def detect_emotion(text, keywords_dict):
@@ -51,32 +51,26 @@ def detect_emotion(text, keywords_dict):
     return dominante, scores
 
 EMOJI = {
-    "Dopamina": "✨",
-    "Oxitocina": "❤️",
-    "Serotonina": "☀️",
-    "Asombro": "🌟",
-    "Adrenalina": "⚡️",
-    "Feniletilamina": "💕",
-    "Norepinefrina": "🔥",
-    "Anandamida": "🌈",
-    "Acetilcolina": "🧠"
+    "Dopamina": "✨", "Oxitocina": "❤️", "Serotonina": "🧠", "Asombro": "🌟",
+    "Adrenalina": "⚡", "Feniletilamina": "💘", "Norepinefrina": "🔥", 
+    "Anandamida": "☀️", "Acetilcolina": "🧩"
 }
 
 def generar_mensaje_emocional(dominante, scores, text, url=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100) for k, v in scores.items()}
-    ordenadas = sorted(porcentajes.items(), key=lambda x: -x[1])
+    ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
     relevancia = porcentajes[dominante]
     estado = "✅ Noticia Aprobada" if relevancia > 0 else "❌ Noticia Rechazada"
-    otras = "\n".join([f"- {k}: {v}%" for k, v in ordenadas if k != dominante])
-    fragmento = text.strip().replace("\n", " ")[:500]
-    
+    otras = "\n".join([f"- {e}: {v}%" for e, v in ordenadas if e != dominante])
+    fragmento = text.strip()[:500].replace("\n", " ")
+
     mensaje = (
         f"<b>{estado} (Relevancia: {relevancia}%)</b>\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
         f"<b>Relevancia emocional:</b> {relevancia}%\n"
-        f"<b>Otras emociones detectadas:</b>\n{otras}\n\n"
+        f"<b>Otras emociones detectadas:</b>\n{otras}\n"
         f"<b>Fragmento:</b>\n{fragmento}"
     )
     if url:
@@ -102,7 +96,7 @@ def recibir_webhook():
     try:
         data = request.get_json()
         logging.warning(f"Mensaje recibido: {data}")
-        texto = data.get("message")
+        texto = data.get("message") or data.get("text") or ""
         if isinstance(texto, dict):
             texto = texto.get("text", "")
         texto = str(texto or "").strip()
@@ -110,21 +104,22 @@ def recibir_webhook():
         if texto == "/resumen":
             if not os.path.exists("registros.csv"):
                 send_to_telegram("⚠️ Aún no hay datos para mostrar un resumen.")
-                return jsonify({"status": "ok"})
-            with open("registros.csv", "r", encoding="utf-8") as f:
+                return jsonify({"status": "empty"})
+
+            with open("registros.csv", newline='', encoding="utf-8") as f:
                 rows = list(csv.reader(f))
             total = len(rows)
             emociones = [row[1] for row in rows]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
-            resumen = f"<b>#Resumen Diario</b>\nTotal noticias: {total}"
+            resumen = f"<b>#Resumen Diario</b>\n"
             for emo, cant in top3:
                 porcentaje = round((cant / total) * 100)
-                resumen += f"\n- {emo}: {porcentaje}%"
+                resumen += f"- {emo}: {cant} ({porcentaje}%)\n"
             send_to_telegram(resumen)
-            return jsonify({"status": "ok"})
+            return jsonify({"status": "ok", "resumen": resumen})
 
-        if not texto.startswith("http") or "://" not in texto:
+        if not texto.startswith("http"):
             return jsonify({"status": "ignored", "reason": "not a URL"})
 
         contenido = extract_text_from_url(texto)
@@ -133,20 +128,20 @@ def recibir_webhook():
 
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
-        hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        with open("registros.csv", "a", encoding="utf-8", newline="") as f:
+        hoy = datetime.utcnow().strftime("%Y-%m-%d")
+        with open("registros.csv", "a", newline='', encoding="utf-8") as f:
             csv.writer(f).writerow([hoy, emocion])
         mensaje = generar_mensaje_emocional(emocion, scores, contenido, texto)
         send_to_telegram(mensaje)
-        return jsonify({"status": "ok", "emocion": emocion})
+        return jsonify({"status": "ok", "emotion": emocion})
 
     except Exception as e:
-        logging.error(f"Error procesando: {e}")
+        logging.error(f"Error procesando webhook: {e}")
         return jsonify({"status": "error", "message": str(e)})
 
 @app.errorhandler(404)
 def ruta_no_encontrada(e):
-    return jsonify({"status": "error", "message": "Ruta no encontrada"}), 404
+    return jsonify({"status": "error", "message": "Ruta no válida"}), 404
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
