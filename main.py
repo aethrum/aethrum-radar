@@ -9,11 +9,9 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import csv
 from collections import defaultdict, Counter
-from ratelimit import limits, sleep_and_retry
 from urllib.parse import urlparse
 from filelock import FileLock
 
-# Configuración inicial
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 app = Flask(__name__)
 
@@ -28,7 +26,6 @@ REGISTROS_CSV = "registros.csv"
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
-# Cache de keywords cargadas
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 
@@ -55,10 +52,9 @@ inicializar_keywords()
 def clean_text(text):
     return re.sub(r'[^a-z0-9\s]', ' ', text.lower()).strip()
 
-@sleep_and_retry
-@limits(calls=1, period=2)
 def extract_text_from_url(url):
     try:
+        time.sleep(2)
         parsed = urlparse(url)
         if not parsed.scheme in ("http", "https") or not parsed.netloc:
             logging.error(f"URL inválida: {url}")
