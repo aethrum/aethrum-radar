@@ -65,7 +65,8 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                 with open(ruta, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     for categoria, contenido in data.items():
-                        keywords = contenido.get("keywords", {})
+                        # CORREGIDO: no usar .get('keywords'), usar directamente contenido si es dict
+                        keywords = contenido if isinstance(contenido, dict) else {}
                         for palabra, peso in keywords.items():
                             palabra_limpia = palabra.lower().strip()
                             if " " in palabra_limpia:
@@ -200,4 +201,4 @@ def ruta_no_encontrada(e):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port) 
+    app.run(host="0.0.0.0", port=port)
