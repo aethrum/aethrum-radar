@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
-UMBRAL_APROBACION = 65  # Ahora se interpreta como porcentaje
+UMBRAL_APROBACION = 60  # aplicado al puntaje final racional
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
@@ -34,9 +34,7 @@ def clean_text(text):
 
 def extract_text_from_url(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
@@ -57,7 +55,6 @@ def detect_emotion(text, keywords_dict):
 def detectar_categoria(texto, carpeta=CATEGORY_DIR):
     texto_limpio = clean_text(texto).split()
     puntajes = defaultdict(int)
-
     for archivo in os.listdir(carpeta):
         if archivo.endswith(".json"):
             ruta = os.path.join(carpeta, archivo)
@@ -72,9 +69,18 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                                 puntajes[categoria] += peso
                         else:
                             puntajes[categoria] += texto_limpio.count(palabra_limpia) * peso
-
     categoria_dominante = max(puntajes, key=puntajes.get, default="indefinido")
     return categoria_dominante, dict(puntajes)
+
+def calcular_puntaje_inteligente(scores, categoria_detectada):
+    total = sum(scores.values()) or 1
+    dominante = max(scores, key=scores.get, default="indefinido")
+    porcentaje_dominante = (scores[dominante] / total) * 100
+    diversidad = len([v for v in scores.values() if (v / total) * 100 > 5])
+    diversidad_score = min(diversidad / 5, 1.0)
+    bonus_categoria = 1.0 if categoria_detectada != "indefinido" else 0.0
+    score = (porcentaje_dominante * 0.5) + (diversidad_score * 20) + (bonus_categoria * 30)
+    return round(min(score, 100), 2), porcentaje_dominante
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
@@ -82,18 +88,16 @@ EMOJI = {
     "Serotonina": "🧘", "Acetilcolina": "🧠", "Fetileminalina": "💘"
 }
 
-def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
+def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None, puntaje=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100, 2) for k, v in scores.items()}
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
-    puntaje_raw = scores.get(dominante, 0)
-    puntaje_dominante = round((puntaje_raw / total) * 100, 2)
-    estado = "✅ Noticia Aprobada" if puntaje_dominante >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
+    estado = "✅ Noticia Aprobada" if puntaje >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != dominante])
     fragmento = text.strip().replace("\n", " ")[:300]
     mensaje = (
-        f"{estado} (Puntaje: {puntaje_dominante}%)\n"
+        f"{estado} (Puntaje: {puntaje}%)\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
         f"<b>Categoría detectada:</b> {categoria}\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n"
@@ -105,14 +109,9 @@ def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None)
 
 def send_to_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
+        requests.post(url, json=payload).raise_for_status()
         logging.info("Mensaje enviado a Telegram")
     except Exception as e:
         logging.error(f"Error enviando a Telegram: {e}")
@@ -122,21 +121,15 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
-
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
             data = {}
 
         msg_data = data.get("message") or data.get("channel_post")
-        if isinstance(msg_data, dict):
-            texto = msg_data.get("text", "")
-        else:
-            texto = str(msg_data or data.get("message") or "")
-
+        texto = msg_data.get("text", "") if isinstance(msg_data, dict) else str(msg_data or "")
         texto = texto.strip().replace("\n", " ")
         if not texto:
-            logging.warning("Mensaje vacío o sin texto")
             return jsonify({"status": "ignorado"})
 
         if texto.lower() == "/resumen":
@@ -149,16 +142,12 @@ def recibir_webhook():
             emociones = [row[1] for row in rows if len(row) > 1]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
-            resumen = "<b>#Resumen Diario</b>\n\n"
-            for emo, cant in top3:
-                porcentaje = round((cant / total) * 100, 2)
-                resumen += f"- {emo}: {porcentaje}%\n"
+            resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {emo}: {round((cant / total) * 100, 2)}%" for emo, cant in top3])
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
         urls = [p for p in texto.split() if p.startswith("http")]
         if not urls:
-            logging.warning(f"Texto ignorado por no contener URL válida: {texto}")
             return jsonify({"status": "ignorado"})
         url = urls[0]
 
@@ -169,15 +158,15 @@ def recibir_webhook():
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
         categoria, _ = detectar_categoria(contenido)
+        puntaje, _ = calcular_puntaje_inteligente(scores, categoria)
 
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with open("registros.csv", "a", encoding="utf-8", newline="") as f:
-            csv.writer(f).writerow([hoy, emocion, categoria])
+            csv.writer(f).writerow([hoy, emocion, categoria, puntaje])
 
-        mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
+        mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria, puntaje)
         send_to_telegram(mensaje)
-        return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
-
+        return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria, "puntaje": puntaje})
     except Exception as e:
         logging.error(f"Error procesando el webhook: {e}")
         return jsonify({"status": "error", "msg": str(e)})
