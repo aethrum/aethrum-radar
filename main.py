@@ -14,6 +14,7 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 EMOTION_DIR = "emociones"
+CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = 65
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -50,13 +51,32 @@ def detect_emotion(text, keywords_dict):
     dominante = max(scores, key=scores.get, default=None)
     return dominante, scores
 
+# NUEVO: Clasificación temática
+def detectar_categoria(texto, carpeta=CATEGORY_DIR):
+    texto_limpio = clean_text(texto).split()
+    puntajes = defaultdict(int)
+
+    for archivo in os.listdir(carpeta):
+        if archivo.endswith(".json"):
+            ruta = os.path.join(carpeta, archivo)
+            with open(ruta, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for categoria, contenido in data.items():
+                    keywords = contenido.get("keywords", {})
+                    for palabra, peso in keywords.items():
+                        puntajes[categoria] += texto_limpio.count(palabra.lower()) * peso
+
+    categoria_dominante = max(puntajes, key=puntajes.get, default="indefinido")
+    return categoria_dominante, dict(puntajes)
+
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
     "Adrenalina": "⚡", "Norepinefrina": "🔥", "Anandamida": "🌀",
     "Serotonina": "🧘", "Acetilcolina": "🧠", "Fetileminalina": "💘"
 }
 
-def generar_mensaje_emocional(dominante, scores, text, url=None):
+# ACTUALIZADO: Ahora incluye categoría
+def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100, 2) for k, v in scores.items()}
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
@@ -68,6 +88,7 @@ def generar_mensaje_emocional(dominante, scores, text, url=None):
     mensaje = (
         f"{estado} (Puntaje: {puntaje_dominante})\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
+        f"<b>Categoría detectada:</b> {categoria}\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n"
         f"<b>Fragmento:</b>\n{fragmento}"
     )
@@ -140,13 +161,15 @@ def recibir_webhook():
 
         keywords_dict = cargar_keywords()
         emocion, scores = detect_emotion(contenido, keywords_dict)
+        categoria, _ = detectar_categoria(contenido)
+
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with open("registros.csv", "a", encoding="utf-8", newline="") as f:
-            csv.writer(f).writerow([hoy, emocion])
+            csv.writer(f).writerow([hoy, emocion, categoria])
 
-        mensaje = generar_mensaje_emocional(emocion, scores, contenido, url)
+        mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
         send_to_telegram(mensaje)
-        return jsonify({"status": "ok", "emocion": emocion})
+        return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
 
     except Exception as e:
         logging.error(f"Error procesando el webhook: {e}")
