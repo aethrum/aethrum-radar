@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import csv
-from collections import Counter
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
@@ -14,6 +14,7 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 EMOTION_DIR = "emociones"
+UMBRAL_APROBACION = 65
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
@@ -42,13 +43,17 @@ def extract_text_from_url(url):
 
 def detect_emotion(text, keywords_dict):
     words = clean_text(text).split()
-    scores = {emotion: sum(words.count(kw) for kw in kws) for emotion, kws in keywords_dict.items()}
+    scores = defaultdict(int)
+    for emotion, palabras in keywords_dict.items():
+        for palabra, peso in palabras.items():
+            scores[emotion] += words.count(palabra.lower()) * peso
     dominante = max(scores, key=scores.get, default=None)
     return dominante, scores
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
-    "Adrenalina": "⚡", "Norepinefrina": "🔥", "Anandamida": "🌀"
+    "Adrenalina": "⚡", "Norepinefrina": "🔥", "Anandamida": "🌀",
+    "Serotonina": "🧘", "Acetilcolina": "🧠", "Fetileminalina": "💘"
 }
 
 def generar_mensaje_emocional(dominante, scores, text, url=None):
@@ -56,14 +61,13 @@ def generar_mensaje_emocional(dominante, scores, text, url=None):
     porcentajes = {k: round((v / total) * 100, 2) for k, v in scores.items()}
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
-    relevancia = porcentajes.get(dominante, 0)
-    estado = "✅ Noticia Aprobada" if relevancia > 15 else "⚠️ Noticia con baja relevancia"
+    puntaje_dominante = scores.get(dominante, 0)
+    estado = "✅ Noticia Aprobada" if puntaje_dominante >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != dominante])
     fragmento = text.strip().replace("\n", " ")[:300]
     mensaje = (
-        f"{estado} (Relevancia: {relevancia}%)\n"
+        f"{estado} (Puntaje: {puntaje_dominante})\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
-        f"<b>Relevancia emocional:</b> {relevancia}%\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n"
         f"<b>Fragmento:</b>\n{fragmento}"
     )
@@ -95,13 +99,8 @@ def recibir_webhook():
         except json.JSONDecodeError:
             data = {}
 
-        msg_container = data.get("message") or data.get("channel_post") or ""
-        if isinstance(msg_container, dict):
-            texto = msg_container.get("text", "")
-        else:
-            texto = str(msg_container)
-
-        texto = texto.strip().replace("\n", " ")
+        msg_data = data.get("message") or data.get("channel_post") or {}
+        texto = msg_data.get("text", "").strip().replace("\n", " ")
         if not texto:
             logging.warning("Mensaje vacío o sin texto")
             return jsonify({"status": "ignorado"})
