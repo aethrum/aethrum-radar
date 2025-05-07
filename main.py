@@ -54,7 +54,8 @@ def detect_emotion(text, keywords_dict):
 
 def detectar_categoria(texto, carpeta=CATEGORY_DIR):
     texto_limpio = clean_text(texto).lower()
-    palabras = texto_limpio.split()
+    palabras_texto = texto_limpio.split()
+    texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
 
     for archivo in os.listdir(carpeta):
@@ -68,10 +69,10 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                         for palabra, peso in keywords.items():
                             palabra_limpia = palabra.lower().strip()
                             if " " in palabra_limpia:
-                                if palabra_limpia in texto_limpio:
+                                if f" {palabra_limpia} " in texto_completo:
                                     puntajes[categoria] += peso
                             else:
-                                puntajes[categoria] += palabras.count(palabra_limpia) * peso
+                                puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
             except Exception as e:
                 logging.warning(f"Error procesando {archivo}: {e}")
 
@@ -199,4 +200,4 @@ def ruta_no_encontrada(e):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port) km
