@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
-UMBRAL_APROBACION = 65
+UMBRAL_APROBACION = 65  # Ahora se interpreta como porcentaje
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
@@ -34,7 +34,9 @@ def clean_text(text):
 
 def extract_text_from_url(url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
@@ -52,10 +54,8 @@ def detect_emotion(text, keywords_dict):
     dominante = max(scores, key=scores.get, default=None)
     return dominante, scores
 
-# CORREGIDA: ahora detecta palabras y frases
 def detectar_categoria(texto, carpeta=CATEGORY_DIR):
-    texto_limpio = clean_text(texto)
-    palabras_limpias = texto_limpio.split()
+    texto_limpio = clean_text(texto).split()
     puntajes = defaultdict(int)
 
     for archivo in os.listdir(carpeta):
@@ -66,12 +66,12 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                 for categoria, contenido in data.items():
                     keywords = contenido.get("keywords", {})
                     for palabra, peso in keywords.items():
-                        palabra_limpia = palabra.lower()
+                        palabra_limpia = palabra.lower().strip()
                         if " " in palabra_limpia:
-                            if palabra_limpia in texto_limpio:
+                            if palabra_limpia in " ".join(texto_limpio):
                                 puntajes[categoria] += peso
                         else:
-                            puntajes[categoria] += palabras_limpias.count(palabra_limpia) * peso
+                            puntajes[categoria] += texto_limpio.count(palabra_limpia) * peso
 
     categoria_dominante = max(puntajes, key=puntajes.get, default="indefinido")
     return categoria_dominante, dict(puntajes)
@@ -83,22 +83,17 @@ EMOJI = {
 }
 
 def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
-    total_score = sum(scores.values())
-    porcentajes = {}
-    if total_score > 0:
-        for emocion, valor in scores.items():
-            porcentajes[emocion] = round((valor / total_score) * 100, 2)
-    else:
-        for emocion in scores:
-            porcentajes[emocion] = 0.0
+    total = sum(scores.values()) or 1
+    porcentajes = {k: round((v / total) * 100, 2) for k, v in scores.items()}
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
-    puntaje_dominante = scores.get(dominante, 0)
+    puntaje_raw = scores.get(dominante, 0)
+    puntaje_dominante = round((puntaje_raw / total) * 100, 2)
     estado = "✅ Noticia Aprobada" if puntaje_dominante >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
     otras = "\n".join([f"- {e}: {p}%" for e, p in ordenadas if e != dominante])
     fragmento = text.strip().replace("\n", " ")[:300]
     mensaje = (
-        f"{estado} (Puntaje: {puntaje_dominante})\n"
+        f"{estado} (Puntaje: {puntaje_dominante}%)\n"
         f"<b>Emoción dominante:</b> {emoji} {dominante}\n"
         f"<b>Categoría detectada:</b> {categoria}\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n"
@@ -127,15 +122,18 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
+
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
             data = {}
+
         msg_data = data.get("message") or data.get("channel_post")
         if isinstance(msg_data, dict):
             texto = msg_data.get("text", "")
         else:
             texto = str(msg_data or data.get("message") or "")
+
         texto = texto.strip().replace("\n", " ")
         if not texto:
             logging.warning("Mensaje vacío o sin texto")
