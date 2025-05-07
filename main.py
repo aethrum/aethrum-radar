@@ -94,10 +94,13 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
+
         try:
             data = json.loads(raw_data)
+            if not isinstance(data, dict):
+                data = {"message": raw_data}
         except json.JSONDecodeError:
-            data = {}
+            data = {"message": raw_data}
 
         msg_data = data.get("message") or data.get("channel_post") or {}
         texto = msg_data.get("text", "").strip().replace("\n", " ")
