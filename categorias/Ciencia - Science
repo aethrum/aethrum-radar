@@ -53,6 +53,16 @@
     "biosfera": 3, "biosphere": 3,
     "astrofísica": 4, "astrophysics": 4,
     "mecánica": 2, "mechanics": 2,
-    "algoritmo": 3, "algorithm": 3
+    "algoritmo": 3, "algorithm": 3,
+    "radiación": 5, "radiation": 5,
+    "ondas cortas": 4, "shortwave": 4,
+    "atmósfera": 4, "atmosphere": 4,
+    "espectro": 3, "spectrum": 3,
+    "absorción": 4, "absorption": 4,
+    "infrarrojo": 4, "infrared": 4,
+    "dispersión": 3, "scattering": 3,
+    "energía solar": 4, "solar energy": 4,
+    "albedo": 3, "earth surface": 3,
+    "física climática": 3, "climate physics": 3
   }
 }
