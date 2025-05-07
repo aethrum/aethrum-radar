@@ -1,15 +1,21 @@
-[
-  "success", "goal", "motivation", "reward", "achievement", "ambition", "win", "progress", "promotion", "victory",
-  "breakthrough", "inspiration", "accomplish", "succeed", "drive", "focus", "goal-setting", "target", "desire",
-  "effort", "performance", "hard work", "challenge", "growth", "evolution", "productivity", "improvement", "plan",
-  "discipline", "strategy", "intention", "targeted", "milestone", "resolve", "commitment", "clarity", "boost",
-  "successfully", "vision", "finish", "grind", "resilience", "execution", "dedication", "breakout", "launch",
-  "achievement", "efficiency", "mastery", "workflow", "endurance", "overcome", "completion", "motivate",
-  "motivated", "energize", "performance", "dream", "goal-driven", "ambitious", "visionary", "upgrade", "progression",
-  "finalize", "complete", "achieve", "earned", "results", "initiative", "solution", "productive", "hustle", "winning",
-  "optimize", "expansion", "breakthroughs", "transform", "forward", "movement", "completion", "next level",
-  "sprint", "gain", "rewarded", "conquer", "goals", "targets", "next step", "reached", "maximized", "scale",
-  "step up", "build", "created", "celebrate", "growth mindset", "milestones", "moving forward", "built",
-  "skyrocket", "growth hacking", "expanding", "develop", "track", "build-up", "persistence", "purpose", "mission",
-  "winning mindset", "greatness", "achievement unlocked", "upward", "unlock", "open doors", "next big thing"
-]
+{
+  "success": 5, "goal": 5, "motivation": 5, "reward": 5, "achievement": 5,
+  "ambition": 5, "win": 5, "progress": 5, "promotion": 5, "victory": 5,
+  "breakthrough": 4, "inspiration": 4, "accomplish": 5, "succeed": 5, "drive": 4,
+  "focus": 4, "goal-setting": 4, "target": 4, "desire": 3,
+  "effort": 3, "performance": 5, "hard work": 4, "challenge": 4, "growth": 4,
+  "evolution": 3, "productivity": 5, "improvement": 4, "plan": 3,
+  "discipline": 4, "strategy": 4, "intention": 3, "targeted": 3, "milestone": 5,
+  "resolve": 3, "commitment": 4, "clarity": 3, "boost": 4,
+  "successfully": 4, "vision": 4, "finish": 4, "grind": 4, "resilience": 4,
+  "execution": 4, "dedication": 4, "breakout": 4, "launch": 3,
+  "efficiency": 4, "mastery": 5, "workflow": 3, "endurance": 3, "overcome": 4,
+  "completion": 4, "motivate": 4,
+  "motivated": 4, "energize": 4, "dream": 3, "goal-driven": 4, "ambitious": 5, "visionary": 4, "upgrade": 4, "progression": 4,
+  "finalize": 4, "complete": 4, "achieve": 5, "earned": 4, "results": 5, "initiative": 3, "solution": 3, "productive": 5, "hustle": 4, "winning": 5,
+  "optimize": 4, "expansion": 4, "breakthroughs": 4, "transform": 4, "forward": 3, "movement": 3, "next level": 5,
+  "sprint": 3, "gain": 4, "rewarded": 4, "conquer": 4, "goals": 5, "targets": 4, "next step": 3, "reached": 5, "maximized": 4, "scale": 3,
+  "step up": 3, "build": 3, "created": 3, "celebrate": 4, "growth mindset": 4, "milestones": 4, "moving forward": 3, "built": 3,
+  "skyrocket": 5, "growth hacking": 3, "expanding": 3, "develop": 3, "track": 3, "build-up": 3, "persistence": 3, "purpose": 4, "mission": 4,
+  "winning mindset": 5, "greatness": 5, "achievement unlocked": 5, "upward": 4, "unlock": 4, "open doors": 4, "next big thing": 5
+}
