@@ -35,7 +35,7 @@ def clean_text(text):
 
 def extract_text_from_url(url):
     try:
-        time.sleep(2)  # Espera para evitar ser bloqueado por 429
+        time.sleep(2)
         headers = { "User-Agent": "Mozilla/5.0" }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
