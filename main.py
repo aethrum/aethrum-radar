@@ -18,11 +18,6 @@ EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = 65
 
-STOPWORDS = {
-    "fox", "news", "media", "audio", "weather", "outkick", "noticias", "books",
-    "u.s.", "crime", "topics", "week's", "top", "latest", "unread", "subscribe"
-}
-
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
@@ -36,8 +31,7 @@ def cargar_keywords():
     return emociones
 
 def clean_text(text):
-    cleaned = ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
-    return ' '.join([w for w in cleaned.split() if w not in STOPWORDS])
+    return ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
 
 def extract_text_from_url(url):
     try:
@@ -89,7 +83,9 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
             except Exception as e:
                 logging.warning(f"Error procesando {archivo}: {e}")
 
-    categoria_dominante = max(puntajes, key=puntajes.get, default="indefinido")
+    if not puntajes:
+        return "otros", {}
+    categoria_dominante = max(puntajes, key=puntajes.get, default="otros")
     return categoria_dominante, dict(puntajes)
 
 EMOJI = {
