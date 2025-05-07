@@ -32,9 +32,13 @@ def cargar_keywords():
 def clean_text(text):
     return ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
 
+# PATCH aplicado: se agregan headers tipo navegador
 def extract_text_from_url(url):
     try:
-        response = requests.get(url, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         return soup.get_text(separator=' ')
@@ -51,7 +55,6 @@ def detect_emotion(text, keywords_dict):
     dominante = max(scores, key=scores.get, default=None)
     return dominante, scores
 
-# NUEVO: Clasificación temática
 def detectar_categoria(texto, carpeta=CATEGORY_DIR):
     texto_limpio = clean_text(texto).split()
     puntajes = defaultdict(int)
@@ -75,7 +78,6 @@ EMOJI = {
     "Serotonina": "🧘", "Acetilcolina": "🧠", "Fetileminalina": "💘"
 }
 
-# ACTUALIZADO: Ahora incluye categoría
 def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
     total = sum(scores.values()) or 1
     porcentajes = {k: round((v / total) * 100, 2) for k, v in scores.items()}
