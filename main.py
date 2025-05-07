@@ -32,12 +32,9 @@ def cargar_keywords():
 def clean_text(text):
     return ''.join(c.lower() if c.isalnum() or c.isspace() else ' ' for c in text)
 
-# PATCH aplicado: se agregan headers tipo navegador
 def extract_text_from_url(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
@@ -58,7 +55,6 @@ def detect_emotion(text, keywords_dict):
 def detectar_categoria(texto, carpeta=CATEGORY_DIR):
     texto_limpio = clean_text(texto).split()
     puntajes = defaultdict(int)
-
     for archivo in os.listdir(carpeta):
         if archivo.endswith(".json"):
             ruta = os.path.join(carpeta, archivo)
@@ -68,7 +64,6 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                     keywords = contenido.get("keywords", {})
                     for palabra, peso in keywords.items():
                         puntajes[categoria] += texto_limpio.count(palabra.lower()) * peso
-
     categoria_dominante = max(puntajes, key=puntajes.get, default="indefinido")
     return categoria_dominante, dict(puntajes)
 
@@ -79,8 +74,14 @@ EMOJI = {
 }
 
 def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
-    total = sum(scores.values()) or 1
-    porcentajes = {k: round((v / total) * 100, 2) for k, v in scores.items()}
+    total_score = sum(scores.values())
+    porcentajes = {}
+    if total_score > 0:
+        for emocion, valor in scores.items():
+            porcentajes[emocion] = round((valor / total_score) * 100, 2)
+    else:
+        for emocion in scores:
+            porcentajes[emocion] = 0.0
     ordenadas = sorted(porcentajes.items(), key=lambda x: x[1], reverse=True)
     emoji = EMOJI.get(dominante, "")
     puntaje_dominante = scores.get(dominante, 0)
@@ -117,18 +118,15 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
-
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
             data = {}
-
         msg_data = data.get("message") or data.get("channel_post")
         if isinstance(msg_data, dict):
             texto = msg_data.get("text", "")
         else:
             texto = str(msg_data or data.get("message") or "")
-
         texto = texto.strip().replace("\n", " ")
         if not texto:
             logging.warning("Mensaje vacío o sin texto")
