@@ -52,9 +52,12 @@ def detect_emotion(text, keywords_dict):
     dominante = max(scores, key=scores.get, default=None)
     return dominante, scores
 
+# CORREGIDA: ahora detecta palabras y frases
 def detectar_categoria(texto, carpeta=CATEGORY_DIR):
-    texto_limpio = clean_text(texto).split()
+    texto_limpio = clean_text(texto)
+    palabras_limpias = texto_limpio.split()
     puntajes = defaultdict(int)
+
     for archivo in os.listdir(carpeta):
         if archivo.endswith(".json"):
             ruta = os.path.join(carpeta, archivo)
@@ -63,7 +66,13 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                 for categoria, contenido in data.items():
                     keywords = contenido.get("keywords", {})
                     for palabra, peso in keywords.items():
-                        puntajes[categoria] += texto_limpio.count(palabra.lower()) * peso
+                        palabra_limpia = palabra.lower()
+                        if " " in palabra_limpia:
+                            if palabra_limpia in texto_limpio:
+                                puntajes[categoria] += peso
+                        else:
+                            puntajes[categoria] += palabras_limpias.count(palabra_limpia) * peso
+
     categoria_dominante = max(puntajes, key=puntajes.get, default="indefinido")
     return categoria_dominante, dict(puntajes)
 
