@@ -75,5 +75,12 @@
     "confession": 4,
     "felon": 4,
     "impunity": 3
+    "judge": 5,
+    "court": 4,
+    "refugees": 4,
+    "law": 3,
+    "migrants": 5,
+    "border": 3,
+    "immigration": 4,
+    "asylum": 4
   }
-}
