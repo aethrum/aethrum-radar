@@ -83,10 +83,16 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
             except Exception as e:
                 logging.warning(f"Error procesando {archivo}: {e}")
 
-    if not puntajes:
+    total = sum(puntajes.values())
+    if total == 0:
         return "otros", {}
-    categoria_dominante = max(puntajes, key=puntajes.get, default="otros")
-    return categoria_dominante, dict(puntajes)
+
+    proporciones = {cat: (valor / total) * 100 for cat, valor in puntajes.items()}
+    mejor_categoria = max(proporciones, key=proporciones.get)
+    if proporciones[mejor_categoria] >= 20:
+        return mejor_categoria, dict(puntajes)
+    else:
+        return mejor_categoria, dict(puntajes)
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
