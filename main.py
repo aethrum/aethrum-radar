@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import time
 from flask import Flask, request, jsonify
 import requests
 from bs4 import BeautifulSoup
@@ -34,14 +35,20 @@ def clean_text(text):
 
 def extract_text_from_url(url):
     try:
+        time.sleep(2)  # Espera para evitar ser bloqueado por 429
         headers = { "User-Agent": "Mozilla/5.0" }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         return soup.get_text(separator=' ')
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            logging.error("Error 429: Too Many Requests")
+        else:
+            logging.error(f"HTTPError: {e}")
     except Exception as e:
         logging.error(f"Error extrayendo texto de URL: {e}")
-        return None
+    return None
 
 def detect_emotion(text, keywords_dict):
     words = clean_text(text).split()
@@ -65,8 +72,7 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
                 with open(ruta, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     for categoria, contenido in data.items():
-                        # CORREGIDO: no usar .get('keywords'), usar directamente contenido si es dict
-                        keywords = contenido if isinstance(contenido, dict) else {}
+                        keywords = contenido.get("keywords", {})
                         for palabra, peso in keywords.items():
                             palabra_limpia = palabra.lower().strip()
                             if " " in palabra_limpia:
