@@ -1,3 +1,5 @@
+# FLASK APP - CLASIFICADOR EMOCIONES Y CATEGORÍAS (FINAL)
+
 import os
 import logging
 import json
@@ -41,14 +43,9 @@ def extract_text_from_url(url):
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         return soup.get_text(separator=' ')
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:
-            logging.error("Error 429: Too Many Requests")
-        else:
-            logging.error(f"HTTPError: {e}")
     except Exception as e:
         logging.error(f"Error extrayendo texto de URL: {e}")
-    return None
+        return None
 
 def detect_emotion(text, keywords_dict):
     words = clean_text(text).split()
@@ -68,31 +65,22 @@ def detectar_categoria(texto, carpeta=CATEGORY_DIR):
     for archivo in os.listdir(carpeta):
         if archivo.endswith(".json"):
             ruta = os.path.join(carpeta, archivo)
-            try:
-                with open(ruta, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    for categoria, contenido in data.items():
-                        keywords = contenido.get("keywords", {})
-                        for palabra, peso in keywords.items():
-                            palabra_limpia = palabra.lower().strip()
-                            if " " in palabra_limpia:
-                                if f" {palabra_limpia} " in texto_completo:
-                                    puntajes[categoria] += peso
-                            else:
-                                puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
-            except Exception as e:
-                logging.warning(f"Error procesando {archivo}: {e}")
+            with open(ruta, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for categoria, contenido in data.items():
+                    keywords = contenido.get("keywords", {})
+                    for palabra, peso in keywords.items():
+                        palabra_limpia = palabra.lower().strip()
+                        if " " in palabra_limpia:
+                            if f" {palabra_limpia} " in texto_completo:
+                                puntajes[categoria] += peso
+                        else:
+                            puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
 
-    total = sum(puntajes.values())
-    if total == 0:
-        return "otros", {}
-
-    proporciones = {cat: (valor / total) * 100 for cat, valor in puntajes.items()}
-    mejor_categoria = max(proporciones, key=proporciones.get)
-    if proporciones[mejor_categoria] >= 20:
-        return mejor_categoria, dict(puntajes)
+    if puntajes:
+        return max(puntajes, key=puntajes.get), dict(puntajes)
     else:
-        return mejor_categoria, dict(puntajes)
+        return "otros", {}
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
@@ -106,14 +94,14 @@ def calcular_nuevo_puntaje(dominante, scores, categoria):
     porcentaje_dominante = round((dominante_valor / total) * 100, 2)
     emociones_relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
     diversidad = min(len(emociones_relevantes), 5) / 5
-    bonus_categoria = 1 if categoria != "indefinido" else 0
+    bonus_categoria = 1 if categoria != "indefinido" and categoria != "otros" else 0
     puntaje_final = round((porcentaje_dominante * 0.5) + (diversidad * 20) + (bonus_categoria * 30), 2)
     return puntaje_final, porcentaje_dominante
 
 def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
     puntaje, porcentaje_dominante = calcular_nuevo_puntaje(dominante, scores, categoria)
-    ordenadas = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     total = sum(scores.values()) or 1
+    ordenadas = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     porcentajes = [(k, round((v / total) * 100, 2)) for k, v in ordenadas if v > 0]
     otras = "\n".join([f"- {e}: {p}%" for e, p in porcentajes if e != dominante])
     emoji = EMOJI.get(dominante, "")
@@ -121,10 +109,10 @@ def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None)
     fragmento = text.strip().replace("\n", " ")[:300]
     mensaje = (
         f"{estado} (Puntaje: {puntaje}%)\n"
-        f"<b>Emoción dominante:</b> {emoji} {dominante} ({porcentaje_dominante}%)\n"
-        f"<b>Categoría detectada:</b> {categoria}\n"
-        f"<b>Otras emociones detectadas:</b>\n{otras}\n"
-        f"<b>Fragmento:</b>\n{fragmento}"
+        f"Emoción dominante: {emoji} {dominante} ({porcentaje_dominante}%)\n"
+        f"Categoría detectada: {categoria}\n"
+        f"Otras emociones detectadas:\n{otras}\n"
+        f"Fragmento:\n{fragmento}"
     )
     if url:
         mensaje += f"\n\n{url}"
@@ -149,17 +137,13 @@ def recibir_webhook():
     try:
         raw_data = request.get_data(as_text=True)
         logging.warning(f"Raw recibido: {raw_data}")
-
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError:
             data = {}
 
         msg_data = data.get("message") or data.get("channel_post")
-        if isinstance(msg_data, dict):
-            texto = msg_data.get("text", "")
-        else:
-            texto = str(msg_data or data.get("message") or "")
+        texto = msg_data.get("text", "") if isinstance(msg_data, dict) else str(msg_data or data.get("message") or "")
 
         texto = texto.strip().replace("\n", " ")
         if not texto:
@@ -176,16 +160,13 @@ def recibir_webhook():
             emociones = [row[1] for row in rows if len(row) > 1]
             conteo = Counter(emociones)
             top3 = conteo.most_common(3)
-            resumen = "<b>#Resumen Diario</b>\n\n"
-            for emo, cant in top3:
-                porcentaje = round((cant / total) * 100, 2)
-                resumen += f"- {emo}: {porcentaje}%\n"
+            resumen = "#Resumen Diario\n\n" + "\n".join([f"- {emo}: {round((cant / total) * 100, 2)}%" for emo, cant in top3])
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
         urls = [p for p in texto.split() if p.startswith("http")]
         if not urls:
-            logging.warning(f"Texto ignorado por no contener URL válida: {texto}")
+            logging.warning("Texto ignorado por no contener URL válida")
             return jsonify({"status": "ignorado"})
         url = urls[0]
 
