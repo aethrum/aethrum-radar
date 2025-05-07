@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import csv
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
@@ -97,13 +97,16 @@ def recibir_webhook():
 
         try:
             data = json.loads(raw_data)
-            if not isinstance(data, dict):
-                data = {"message": raw_data}
         except json.JSONDecodeError:
-            data = {"message": raw_data}
+            data = {}
 
-        msg_data = data.get("message") or data.get("channel_post") or {}
-        texto = msg_data.get("text", "").strip().replace("\n", " ")
+        msg_data = data.get("message") or data.get("channel_post")
+        if isinstance(msg_data, dict):
+            texto = msg_data.get("text", "")
+        else:
+            texto = str(msg_data or data.get("message") or "")
+
+        texto = texto.strip().replace("\n", " ")
         if not texto:
             logging.warning("Mensaje vacío o sin texto")
             return jsonify({"status": "ignorado"})
