@@ -12,9 +12,10 @@ from collections import defaultdict, Counter
 from urllib.parse import urlparse
 from filelock import FileLock
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secure_token")
@@ -29,17 +30,28 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 
+# Carga de archivos .json
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
-            nombre = archivo.replace(".json", "")
-            with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
-                KEYWORDS_CACHE[nombre] = json.load(f)
+            try:
+                with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
+                    KEYWORDS_CACHE[archivo.replace(".json", "")] = json.load(f)
+            except Exception as e:
+                logging.error(f"Error cargando emoción {archivo}: {e}")
+
     for archivo in os.listdir(CATEGORY_DIR):
         if archivo.endswith(".json"):
-            with open(os.path.join(CATEGORY_DIR, archivo), "r", encoding="utf-8") as f:
-                data = json.load(f)
-                CATEGORIAS_CACHE.update({archivo.replace(".json", ""): data})
+            try:
+                with open(os.path.join(CATEGORY_DIR, archivo), "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        if "keywords" in data:
+                            CATEGORIAS_CACHE[archivo.replace(".json", "")] = data
+                        else:
+                            CATEGORIAS_CACHE[archivo.replace(".json", "")] = {"keywords": data}
+            except Exception as e:
+                logging.error(f"Error cargando categoría {archivo}: {e}")
 
 inicializar_keywords()
 
@@ -48,9 +60,9 @@ def clean_text(text):
 
 def extract_text_from_url(url):
     try:
-        time.sleep(2)
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            logging.error(f"URL inválida: {url}")
             return None
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
@@ -58,7 +70,7 @@ def extract_text_from_url(url):
         soup = BeautifulSoup(response.text, "html.parser")
         return soup.get_text(separator=' ')
     except Exception as e:
-        logging.error(f"Error extrayendo texto: {e}")
+        logging.error(f"Error al extraer URL: {e}")
         return None
 
 def detect_emotion(text):
@@ -72,18 +84,18 @@ def detect_emotion(text):
     return dominante, scores
 
 def detectar_categoria(texto):
-    texto_limpio = clean_text(texto)
-    palabras_texto = texto_limpio.split()
+    palabras_texto = clean_text(texto).split()
     texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
-    for categoria, palabras in CATEGORIAS_CACHE.items():
-        for palabra, peso in palabras.items():
-            palabra = palabra.lower().strip()
-            if " " in palabra:
-                if f" {palabra} " in texto_completo:
+    for categoria, contenido in CATEGORIAS_CACHE.items():
+        keywords = contenido.get("keywords", {})
+        for palabra, peso in keywords.items():
+            palabra_limpia = palabra.lower().strip()
+            if " " in palabra_limpia:
+                if f" {palabra_limpia} " in texto_completo:
                     puntajes[categoria] += peso
             else:
-                puntajes[categoria] += palabras_texto.count(palabra) * peso
+                puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
     categoria_dominante = max(puntajes, key=puntajes.get, default="otros")
     return categoria_dominante, dict(puntajes)
 
@@ -95,23 +107,24 @@ EMOJI = {
 
 def calcular_nuevo_puntaje(dominante, scores, categoria):
     total = sum(scores.values()) or 1
-    porcentaje = (scores[dominante] / total) * 100
-    diversidad = min(len([v for v in scores.values() if (v / total) * 100 > 5]), 5) / 5
-    bonus = 30 if categoria != "otros" else 0
-    final = round((porcentaje * 0.5) + (diversidad * 20) + bonus, 2)
-    return final, round(porcentaje, 2)
+    porcentaje = round((scores.get(dominante, 0) / total) * 100, 2)
+    relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
+    diversidad = min(len(relevantes), 5) / 5
+    bonus = 1 if categoria != "otros" else 0
+    puntaje = round((porcentaje * 0.5) + (diversidad * 20) + (bonus * 30), 2)
+    return puntaje, porcentaje
 
-def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None):
-    puntaje, porcentaje_dominante = calcular_nuevo_puntaje(dominante, scores, categoria)
+def generar_mensaje_emocional(dominante, scores, texto, url=None, categoria=None):
+    puntaje, porcentaje = calcular_nuevo_puntaje(dominante, scores, categoria)
     total = sum(scores.values()) or 1
-    porcentajes = [(k, round((v / total) * 100, 2)) for k, v in sorted(scores.items(), key=lambda x: x[1], reverse=True) if v > 0]
-    otras = "\n".join([f"- {k}: {p}%" for k, p in porcentajes if k != dominante])
+    porcentajes = [(k, round((v / total) * 100, 2)) for k, v in sorted(scores.items(), key=lambda x: x[1], reverse=True)]
+    otras = "\n".join([f"- {e}: {p}%" for e, p in porcentajes if e != dominante])
     emoji = EMOJI.get(dominante, "")
     estado = "✅ Noticia Aprobada" if puntaje >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
-    fragmento = text.strip().replace("\n", " ")[:300].replace("maldita", "**BENDITO**")
+    fragmento = texto.strip().replace("\n", " ")[:300].replace("maldita", "**BENDITO**")
     mensaje = (
         f"{estado} (Puntaje: {puntaje}%)\n"
-        f"<b>Emoción dominante:</b> {emoji} {dominante} ({porcentaje_dominante}%)\n"
+        f"<b>Emoción dominante:</b> {emoji} {dominante} ({porcentaje}%)\n"
         f"<b>Categoría detectada:</b> {categoria}\n"
         f"<b>Otras emociones detectadas:</b>\n{otras}\n"
         f"<b>Fragmento:</b>\n{fragmento}"
@@ -120,61 +133,65 @@ def generar_mensaje_emocional(dominante, scores, text, url=None, categoria=None)
         mensaje += f"\n\n{url}"
     return mensaje
 
-def send_to_telegram(message):
+def send_to_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-    try:
-        response = requests.post(url, json=data, timeout=10)
-        response.raise_for_status()
-    except Exception as e:
-        logging.error(f"Error al enviar mensaje a Telegram: {e}")
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    for _ in range(3):
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            r.raise_for_status()
+            logging.info("Mensaje enviado a Telegram")
+            return
+        except Exception as e:
+            logging.error(f"Error enviando mensaje: {e}")
+            time.sleep(2)
 
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
         return jsonify({"status": "forbidden"}), 403
     try:
-        raw_data = request.get_data(as_text=True)
-        data = json.loads(raw_data)
-        msg_data = data.get("message") or data.get("channel_post")
-        texto = msg_data.get("text", "") if isinstance(msg_data, dict) else str(msg_data or "")
-        texto = texto.strip().replace("\n", " ")
+        data = request.get_json(force=True)
+        msg_data = data.get("message") or data.get("channel_post", {})
+        texto = msg_data.get("text", "").strip()
         if not texto:
             return jsonify({"status": "ignorado"})
 
         if texto.lower() == "/resumen":
             if not os.path.exists(REGISTROS_CSV):
-                send_to_telegram("⚠️ Aún no hay datos.")
+                send_to_telegram("⚠️ No hay datos para el resumen.")
                 return jsonify({"status": "ok"})
             with FileLock(REGISTROS_CSV + ".lock"):
                 with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
                     rows = list(csv.reader(f))
-            total = len(rows)
-            emociones = [row[1] for row in rows if len(row) > 1]
-            conteo = Counter(emociones).most_common(3)
-            resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c / total * 100, 2)}%" for e, c in conteo])
+            emociones = [r[1] for r in rows if len(r) > 1]
+            top3 = Counter(emociones).most_common(3)
+            resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
             send_to_telegram(resumen)
             return jsonify({"status": "ok"})
 
-        urls = [x for x in texto.split() if re.match(r'^https?://', x)]
+        urls = [p for p in texto.split() if re.match(r'^https?://', p)]
         if not urls:
             return jsonify({"status": "ignorado"})
         url = urls[0]
+
         contenido = extract_text_from_url(url)
         if not contenido:
             return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
 
         emocion, scores = detect_emotion(contenido)
         categoria, _ = detectar_categoria(contenido)
+
         hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with FileLock(REGISTROS_CSV + ".lock"):
             with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
                 csv.writer(f).writerow([hoy, emocion, categoria])
+
         mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
         send_to_telegram(mensaje)
         return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
     except Exception as e:
-        logging.error(f"Error procesando webhook: {e}")
+        logging.error(f"Error: {e}")
         return jsonify({"status": "error", "msg": str(e)})
 
 @app.errorhandler(404)
