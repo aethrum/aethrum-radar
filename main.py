@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")  # Valor por defecto si no está definido
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
@@ -77,6 +77,8 @@ def detectar_categoria(texto):
     palabras_texto = clean_text(texto).split()
     texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
+    coincidencias = defaultdict(int)
+
     for categoria, contenido in CATEGORIAS_CACHE.items():
         keywords = contenido.get("keywords", {})
         for palabra, peso in keywords.items():
@@ -84,9 +86,17 @@ def detectar_categoria(texto):
             if " " in palabra_limpia:
                 if f" {palabra_limpia} " in texto_completo:
                     puntajes[categoria] += peso
+                    coincidencias[categoria] += 1
             else:
-                puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
-    categoria_dominante = max(puntajes, key=puntajes.get, default="otros")
+                ocurrencias = palabras_texto.count(palabra_limpia)
+                puntajes[categoria] += ocurrencias * peso
+                if ocurrencias > 0:
+                    coincidencias[categoria] += 1
+
+    candidatas = {cat: puntajes[cat] for cat in puntajes if coincidencias[cat] >= 2}
+    if not candidatas:
+        return "otros", dict(puntajes)
+    categoria_dominante = max(candidatas, key=candidatas.get)
     return categoria_dominante, dict(puntajes)
 
 EMOJI = {
@@ -138,8 +148,6 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
-
-    # Seguridad mínima con token en el body
     if data.get("token") != WEBHOOK_SECRET:
         return jsonify({"status": "forbidden"}), 403
 
