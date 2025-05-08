@@ -77,26 +77,24 @@ def detectar_categoria(texto):
     palabras_texto = clean_text(texto).split()
     texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
-    coincidencias = defaultdict(int)
-
     for categoria, contenido in CATEGORIAS_CACHE.items():
         keywords = contenido.get("keywords", {})
+        hits = 0
         for palabra, peso in keywords.items():
             palabra_limpia = palabra.lower().strip()
             if " " in palabra_limpia:
                 if f" {palabra_limpia} " in texto_completo:
                     puntajes[categoria] += peso
-                    coincidencias[categoria] += 1
+                    hits += 1
             else:
-                ocurrencias = palabras_texto.count(palabra_limpia)
-                puntajes[categoria] += ocurrencias * peso
-                if ocurrencias > 0:
-                    coincidencias[categoria] += 1
-
-    candidatas = {cat: puntajes[cat] for cat in puntajes if coincidencias[cat] >= 2}
-    if not candidatas:
-        return "otros", dict(puntajes)
-    categoria_dominante = max(candidatas, key=candidatas.get)
+                match_count = palabras_texto.count(palabra_limpia)
+                puntajes[categoria] += match_count * peso
+                if match_count > 0:
+                    hits += 1
+        # Penalización si tiene menos de 2 hits
+        if hits < 2:
+            puntajes[categoria] = 0
+    categoria_dominante = max(puntajes, key=puntajes.get)
     return categoria_dominante, dict(puntajes)
 
 EMOJI = {
@@ -110,7 +108,7 @@ def calcular_nuevo_puntaje(dominante, scores, categoria):
     porcentaje = round((scores.get(dominante, 0) / total) * 100, 2)
     relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
     diversidad = min(len(relevantes), 5) / 5
-    bonus = 1 if categoria != "otros" else 0
+    bonus = 1 if categoria else 0
     puntaje = round((porcentaje * 0.5) + (diversidad * 20) + (bonus * 30), 2)
     return puntaje, porcentaje
 
@@ -148,6 +146,7 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
+
     if data.get("token") != WEBHOOK_SECRET:
         return jsonify({"status": "forbidden"}), 403
 
