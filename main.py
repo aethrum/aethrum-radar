@@ -17,7 +17,6 @@ app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secure_token")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
@@ -153,8 +152,6 @@ def send_to_telegram(message):
 
 @app.route("/", methods=["POST"])
 def recibir_webhook():
-    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
-        return jsonify({"status": "forbidden"}), 403
     try:
         raw_data = request.get_data(as_text=True)
         try:
