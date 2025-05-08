@@ -15,7 +15,6 @@ from filelock import FileLock
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
@@ -30,7 +29,6 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 
-# Carga de archivos .json
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
@@ -79,6 +77,8 @@ def detectar_categoria(texto):
     palabras_texto = clean_text(texto).split()
     texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
+    coincidencias = defaultdict(set)
+
     for categoria, contenido in CATEGORIAS_CACHE.items():
         keywords = contenido.get("keywords", {})
         for palabra, peso in keywords.items():
@@ -86,13 +86,24 @@ def detectar_categoria(texto):
             if " " in palabra_limpia:
                 if f" {palabra_limpia} " in texto_completo:
                     puntajes[categoria] += peso
+                    coincidencias[categoria].add(palabra_limpia)
             else:
-                puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
+                repeticiones = palabras_texto.count(palabra_limpia)
+                if repeticiones:
+                    puntajes[categoria] += repeticiones * peso
+                    coincidencias[categoria].add(palabra_limpia)
 
     if not puntajes:
         return "sin_categoria", {}
 
-    categoria_dominante = max(puntajes, key=puntajes.get)
+    max_puntaje = max(puntajes.values())
+    candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
+
+    if len(candidatas) == 1:
+        categoria_dominante = candidatas[0]
+    else:
+        categoria_dominante = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
+
     return categoria_dominante, dict(puntajes)
 
 EMOJI = {
@@ -144,7 +155,6 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
-
     if data.get("token") != WEBHOOK_SECRET:
         return jsonify({"status": "forbidden"}), 403
 
