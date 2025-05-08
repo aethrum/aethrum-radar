@@ -1,5 +1,5 @@
 {
-  "Ciencia": {
+  "keywords": {
     "investigación": 5, "research": 5,
     "experimento": 5, "experiment": 5,
     "método": 4, "method": 4,
@@ -18,7 +18,7 @@
     "ciencia": 5, "science": 5,
     "genética": 4, "genetics": 4,
     "evolución": 4, "evolution": 4,
-    "nobel": 5, "nobel": 5,
+    "nobel": 5,
     "astronomía": 3, "astronomy": 3,
     "biología": 5, "biology": 5,
     "química": 5, "chemistry": 5,
