@@ -15,6 +15,7 @@ from filelock import FileLock
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
@@ -29,6 +30,7 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 
+# Carga de archivos .json
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
@@ -79,21 +81,17 @@ def detectar_categoria(texto):
     puntajes = defaultdict(int)
     for categoria, contenido in CATEGORIAS_CACHE.items():
         keywords = contenido.get("keywords", {})
-        hits = 0
         for palabra, peso in keywords.items():
             palabra_limpia = palabra.lower().strip()
             if " " in palabra_limpia:
                 if f" {palabra_limpia} " in texto_completo:
                     puntajes[categoria] += peso
-                    hits += 1
             else:
-                match_count = palabras_texto.count(palabra_limpia)
-                puntajes[categoria] += match_count * peso
-                if match_count > 0:
-                    hits += 1
-        # Penalización si tiene menos de 2 hits
-        if hits < 2:
-            puntajes[categoria] = 0
+                puntajes[categoria] += palabras_texto.count(palabra_limpia) * peso
+
+    if not puntajes:
+        return "sin_categoria", {}
+
     categoria_dominante = max(puntajes, key=puntajes.get)
     return categoria_dominante, dict(puntajes)
 
@@ -108,7 +106,7 @@ def calcular_nuevo_puntaje(dominante, scores, categoria):
     porcentaje = round((scores.get(dominante, 0) / total) * 100, 2)
     relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
     diversidad = min(len(relevantes), 5) / 5
-    bonus = 1 if categoria else 0
+    bonus = 1 if categoria != "sin_categoria" else 0
     puntaje = round((porcentaje * 0.5) + (diversidad * 20) + (bonus * 30), 2)
     return puntaje, porcentaje
 
