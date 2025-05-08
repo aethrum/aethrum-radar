@@ -1,5 +1,5 @@
 {
-  "Mecánica y Automovilismo": {
+  "keywords": {
     "motor": 5,
     "engine": 5,
     "velocidad": 5,
@@ -70,7 +70,6 @@
     "windshield": 2,
     "luces": 2,
     "headlights": 2,
-    "competencia": 4,
     "pit stop": 4,
     "clutch": 3,
     "embrague": 3,
