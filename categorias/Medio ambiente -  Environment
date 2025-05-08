@@ -1,5 +1,5 @@
 {
-  "medio_ambiente": {
+  "keywords": {
     "medio ambiente": 5,
     "ecología": 5,
     "naturaleza": 5,
@@ -47,7 +47,6 @@
     "waste": 4,
     "green": 3,
     "renewable energy": 5,
-    "solar": 4,
     "wind power": 4,
     "carbon footprint": 5,
     "deforestation": 5,
@@ -55,7 +54,6 @@
     "wildlife": 4,
     "endangered species": 5,
     "conservation": 5,
-    "plants": 3,
     "reuse": 4,
     "care": 3,
     "habitat": 4,
