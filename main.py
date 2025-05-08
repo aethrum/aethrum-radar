@@ -15,10 +15,9 @@ from filelock import FileLock
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secure_token")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")  # Valor por defecto si no está definido
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
@@ -30,28 +29,20 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 
-# Carga de archivos .json
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
-            try:
-                with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
-                    KEYWORDS_CACHE[archivo.replace(".json", "")] = json.load(f)
-            except Exception as e:
-                logging.error(f"Error cargando emoción {archivo}: {e}")
-
+            with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
+                KEYWORDS_CACHE[archivo.replace(".json", "")] = json.load(f)
     for archivo in os.listdir(CATEGORY_DIR):
         if archivo.endswith(".json"):
-            try:
-                with open(os.path.join(CATEGORY_DIR, archivo), "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
-                        if "keywords" in data:
-                            CATEGORIAS_CACHE[archivo.replace(".json", "")] = data
-                        else:
-                            CATEGORIAS_CACHE[archivo.replace(".json", "")] = {"keywords": data}
-            except Exception as e:
-                logging.error(f"Error cargando categoría {archivo}: {e}")
+            with open(os.path.join(CATEGORY_DIR, archivo), "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    if "keywords" in data:
+                        CATEGORIAS_CACHE[archivo.replace(".json", "")] = data
+                    else:
+                        CATEGORIAS_CACHE[archivo.replace(".json", "")] = {"keywords": data}
 
 inicializar_keywords()
 
@@ -62,7 +53,6 @@ def extract_text_from_url(url):
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            logging.error(f"URL inválida: {url}")
             return None
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
@@ -70,7 +60,7 @@ def extract_text_from_url(url):
         soup = BeautifulSoup(response.text, "html.parser")
         return soup.get_text(separator=' ')
     except Exception as e:
-        logging.error(f"Error al extraer URL: {e}")
+        logging.error(f"Error al extraer texto: {e}")
         return None
 
 def detect_emotion(text):
@@ -140,7 +130,6 @@ def send_to_telegram(msg):
         try:
             r = requests.post(url, json=payload, timeout=10)
             r.raise_for_status()
-            logging.info("Mensaje enviado a Telegram")
             return
         except Exception as e:
             logging.error(f"Error enviando mensaje: {e}")
@@ -148,51 +137,49 @@ def send_to_telegram(msg):
 
 @app.route("/", methods=["POST"])
 def recibir_webhook():
-    if request.headers.get("Authorization") != f"Bearer {WEBHOOK_SECRET}":
+    data = request.get_json(force=True)
+
+    # Seguridad mínima con token en el body
+    if data.get("token") != WEBHOOK_SECRET:
         return jsonify({"status": "forbidden"}), 403
-    try:
-        data = request.get_json(force=True)
-        msg_data = data.get("message") or data.get("channel_post", {})
-        texto = msg_data.get("text", "").strip()
-        if not texto:
-            return jsonify({"status": "ignorado"})
 
-        if texto.lower() == "/resumen":
-            if not os.path.exists(REGISTROS_CSV):
-                send_to_telegram("⚠️ No hay datos para el resumen.")
-                return jsonify({"status": "ok"})
-            with FileLock(REGISTROS_CSV + ".lock"):
-                with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
-                    rows = list(csv.reader(f))
-            emociones = [r[1] for r in rows if len(r) > 1]
-            top3 = Counter(emociones).most_common(3)
-            resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
-            send_to_telegram(resumen)
+    texto = data.get("message", "").strip()
+    if not texto:
+        return jsonify({"status": "ignorado"})
+
+    if texto.lower() == "/resumen":
+        if not os.path.exists(REGISTROS_CSV):
+            send_to_telegram("⚠️ No hay datos para el resumen.")
             return jsonify({"status": "ok"})
-
-        urls = [p for p in texto.split() if re.match(r'^https?://', p)]
-        if not urls:
-            return jsonify({"status": "ignorado"})
-        url = urls[0]
-
-        contenido = extract_text_from_url(url)
-        if not contenido:
-            return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
-
-        emocion, scores = detect_emotion(contenido)
-        categoria, _ = detectar_categoria(contenido)
-
-        hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         with FileLock(REGISTROS_CSV + ".lock"):
-            with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
-                csv.writer(f).writerow([hoy, emocion, categoria])
+            with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
+                rows = list(csv.reader(f))
+        emociones = [r[1] for r in rows if len(r) > 1]
+        top3 = Counter(emociones).most_common(3)
+        resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
+        send_to_telegram(resumen)
+        return jsonify({"status": "ok"})
 
-        mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
-        send_to_telegram(mensaje)
-        return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
-    except Exception as e:
-        logging.error(f"Error: {e}")
-        return jsonify({"status": "error", "msg": str(e)})
+    urls = [p for p in texto.split() if re.match(r'^https?://', p)]
+    if not urls:
+        return jsonify({"status": "ignorado"})
+    url = urls[0]
+
+    contenido = extract_text_from_url(url)
+    if not contenido:
+        return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
+
+    emocion, scores = detect_emotion(contenido)
+    categoria, _ = detectar_categoria(contenido)
+
+    hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    with FileLock(REGISTROS_CSV + ".lock"):
+        with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
+            csv.writer(f).writerow([hoy, emocion, categoria])
+
+    mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
+    send_to_telegram(mensaje)
+    return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
 
 @app.errorhandler(404)
 def ruta_no_encontrada(e):
