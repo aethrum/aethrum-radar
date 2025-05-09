@@ -1,3 +1,4 @@
+
 import os
 import logging
 import json
@@ -15,15 +16,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
 REGISTROS_CSV = "registros.csv"
-
-if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
@@ -138,99 +135,69 @@ def generar_mensaje_emocional(dominante, scores, texto, url=None, categoria=None
         mensaje += f"\n\n{url}"
     return mensaje
 
-def send_to_telegram(msg):
+def send_telegram_message(chat_id, message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        logging.error(f"Error enviando a Telegram: {e}")
+        logging.error(f"Error al enviar mensaje a Telegram: {e}")
 
-@app.route("/", methods=["POST"])
-def recibir_webhook():
-    data = request.get_json(force=True)
+@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=["POST"])
+def webhook():
+    update = request.get_json()
+    if not update or "message" not in update:
+        return jsonify({"status": "ok"}), 200
 
-    mensaje = data.get("message")
-    chat_id = TELEGRAM_CHAT_ID
-    texto = ""
+    message = update["message"]
+    chat_id = message["chat"]["id"]
+    text = message.get("text", "").strip()
 
-    if isinstance(mensaje, dict):
-        texto = mensaje.get("text", "").strip()
-        chat_info = mensaje.get("chat")
-        if isinstance(chat_info, dict):
-            chat_id = chat_info.get("id", TELEGRAM_CHAT_ID)
+    if text.startswith("/verificar"):
+        return handle_verificar(chat_id, text)
+    elif text.startswith("/resumen"):
+        return handle_resumen(chat_id, text)
+    return jsonify({"status": "ok"}), 200
+
+def handle_verificar(chat_id, text):
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        send_telegram_message(chat_id, "Por favor, proporciona una URL o texto para verificar.")
+        return jsonify({"status": "ok"}), 200
+
+    input_text = parts[1]
+    if input_text.startswith("http"):
+        texto = extract_text_from_url(input_text)
+        if not texto:
+            send_telegram_message(chat_id, "No se pudo extraer texto de la URL.")
+            return jsonify({"status": "ok"}), 200
     else:
-        texto = str(mensaje).strip()
+        texto = input_text
 
-    if not texto:
-        return jsonify({"status": "ignorado"})
+    dominante, scores = detect_emotion(texto)
+    categoria, _ = detectar_categoria(texto)
+    mensaje = generar_mensaje_emocional(dominante, scores, texto, input_text if input_text.startswith("http") else None, categoria)
+    send_telegram_message(chat_id, mensaje)
+    return jsonify({"status": "ok"}), 200
 
-    comando = texto.lower().strip().lstrip("/")
+def handle_resumen(chat_id, text):
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        send_telegram_message(chat_id, "Por favor, proporciona una URL o texto para resumir.")
+        return jsonify({"status": "ok"}), 200
 
-    if comando == "verificar":
-        pending_verifications[chat_id] = True
-        send_to_telegram("Por favor, envíame el enlace RSS para verificar.")
-        return jsonify({"status": "esperando_url"})
+    input_text = parts[1]
+    if input_text.startswith("http"):
+        texto = extract_text_from_url(input_text)
+        if not texto:
+            send_telegram_message(chat_id, "No se pudo extraer texto de la URL.")
+            return jsonify({"status": "ok"}), 200
+    else:
+        texto = input_text
 
-    if comando == "resumen":
-        pending_summaries[chat_id] = True
-        send_to_telegram("Envíame una URL para hacer el resumen.")
-        return jsonify({"status": "esperando_url_resumen"})
-
-    contiene_url = any(re.match(r'^https?://', p) for p in texto.split())
-    if contiene_url and data.get("token") != WEBHOOK_SECRET:
-        return jsonify({"status": "no autorizado"}), 403
-
-    if pending_verifications.get(chat_id):
-        pending_verifications.pop(chat_id)
-        if re.match(r'^https?://', texto):
-            try:
-                response = requests.head(texto, timeout=5)
-                if response.status_code in [200, 301]:
-                    send_to_telegram("✅ URL verificada correctamente.")
-                else:
-                    send_to_telegram("❌ URL no verificada. Código HTTP inesperado.")
-            except Exception:
-                send_to_telegram("❌ URL no verificada. Error de conexión.")
-        else:
-            send_to_telegram("❌ URL no válida. Debe comenzar con http:// o https://")
-        return jsonify({"status": "verificado"})
-
-    if pending_summaries.get(chat_id):
-        pending_summaries.pop(chat_id)
-        if re.match(r'^https?://', texto):
-            contenido = extract_text_from_url(texto)
-            resumen = contenido[:800] + "..." if contenido else "No se pudo obtener contenido"
-            send_to_telegram(f"<b>Resumen solicitado:</b>\n{resumen}")
-            return jsonify({"status": "resumen_enviado"})
-        else:
-            send_to_telegram("❌ URL no válida para resumen.")
-            return jsonify({"status": "url_invalida"})
-
-    urls = [p for p in texto.split() if re.match(r'^https?://', p)]
-    if not urls:
-        return jsonify({"status": "ignorado"})
-
-    url = urls[0]
-    contenido = extract_text_from_url(url)
-    if not contenido:
-        return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
-
-    emocion, scores = detect_emotion(contenido)
-    categoria, _ = detectar_categoria(contenido)
-
-    hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    with FileLock(REGISTROS_CSV + ".lock"):
-        with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
-            csv.writer(f).writerow([hoy, emocion, categoria])
-
-    mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
-    send_to_telegram(mensaje)
-    return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
-
-@app.errorhandler(404)
-def ruta_no_encontrada(e):
-    return jsonify({"status": "error", "msg": "Ruta no encontrada"}), 404
+    resumen = " ".join(clean_text(texto).split()[:100]) + "..."
+    send_telegram_message(chat_id, f"<b>Resumen:</b>\n{resumen}")
+    return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
