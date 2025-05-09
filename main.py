@@ -15,15 +15,14 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
 UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
 REGISTROS_CSV = "registros.csv"
 
-if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
+if not TELEGRAM_TOKEN:
+    raise EnvironmentError("Falta TELEGRAM_TOKEN")
 
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
@@ -138,9 +137,9 @@ def generar_mensaje_emocional(dominante, scores, texto, url=None, categoria=None
         mensaje += f"\n\n{url}"
     return mensaje
 
-def send_to_telegram(msg):
+def send_to_telegram(msg, chat_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    payload = {"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
@@ -149,21 +148,23 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
-    texto = data.get("message", "").strip()
-    if not texto:
+    message = data.get("message", {})
+    texto = message.get("text", "").strip()
+    chat_id = message.get("chat", {}).get("id")
+
+    if not texto or not chat_id:
         return jsonify({"status": "ignorado"})
 
-    chat_id = TELEGRAM_CHAT_ID
     comando = texto.lower().strip().lstrip("/")
 
     if comando == "verificar":
         pending_verifications[chat_id] = True
-        send_to_telegram("Por favor, envíame el enlace RSS para verificar.")
+        send_to_telegram("Por favor, envíame el enlace RSS para verificar.", chat_id)
         return jsonify({"status": "esperando_url"})
 
     if comando == "resumen":
         pending_summaries[chat_id] = True
-        send_to_telegram("Envíame una URL para hacer el resumen.")
+        send_to_telegram("Envíame una URL para hacer el resumen.", chat_id)
         return jsonify({"status": "esperando_url_resumen"})
 
     contiene_url = any(re.match(r'^https?://', p) for p in texto.split())
@@ -176,13 +177,13 @@ def recibir_webhook():
             try:
                 response = requests.head(texto, timeout=5)
                 if response.status_code in [200, 301]:
-                    send_to_telegram("✅ URL verificada correctamente.")
+                    send_to_telegram("✅ URL verificada correctamente.", chat_id)
                 else:
-                    send_to_telegram("❌ URL no verificada. Código HTTP inesperado.")
+                    send_to_telegram("❌ URL no verificada. Código HTTP inesperado.", chat_id)
             except Exception:
-                send_to_telegram("❌ URL no verificada. Error de conexión.")
+                send_to_telegram("❌ URL no verificada. Error de conexión.", chat_id)
         else:
-            send_to_telegram("❌ URL no válida. Debe comenzar con http:// o https://")
+            send_to_telegram("❌ URL no válida. Debe comenzar con http:// o https://", chat_id)
         return jsonify({"status": "verificado"})
 
     if pending_summaries.get(chat_id):
@@ -190,10 +191,10 @@ def recibir_webhook():
         if re.match(r'^https?://', texto):
             contenido = extract_text_from_url(texto)
             resumen = contenido[:800] + "..." if contenido else "No se pudo obtener contenido"
-            send_to_telegram(f"<b>Resumen solicitado:</b>\n{resumen}")
+            send_to_telegram(f"<b>Resumen solicitado:</b>\n{resumen}", chat_id)
             return jsonify({"status": "resumen_enviado"})
         else:
-            send_to_telegram("❌ URL no válida para resumen.")
+            send_to_telegram("❌ URL no válida para resumen.", chat_id)
             return jsonify({"status": "url_invalida"})
 
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
@@ -214,7 +215,7 @@ def recibir_webhook():
             csv.writer(f).writerow([hoy, emocion, categoria])
 
     mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
-    send_to_telegram(mensaje)
+    send_to_telegram(mensaje, chat_id)
     return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
 
 @app.errorhandler(404)
