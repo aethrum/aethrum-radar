@@ -152,16 +152,12 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
-    if data.get("token") != WEBHOOK_SECRET:
-        return jsonify({"status": "no autorizado"}), 403
-
     texto = data.get("message", "").strip()
     if not texto:
         return jsonify({"status": "ignorado"})
 
     chat_id = TELEGRAM_CHAT_ID
 
-    # Comando Verificar
     if texto.lower() == "verificar":
         pending_verifications[chat_id] = True
         send_to_telegram("Por favor, envíame el enlace RSS para verificar.")
@@ -182,7 +178,10 @@ def recibir_webhook():
         pending_verifications.pop(chat_id, None)
         return jsonify({"status": "verificado"})
 
-    # Procesamiento normal de noticias
+    contiene_url = any(re.match(r'^https?://', p) for p in texto.split())
+    if contiene_url and data.get("token") != WEBHOOK_SECRET:
+        return jsonify({"status": "no autorizado"}), 403
+
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
     if not urls:
         return jsonify({"status": "ignorado"})
