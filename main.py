@@ -150,17 +150,19 @@ def send_to_telegram(msg):
 def recibir_webhook():
     data = request.get_json(force=True)
 
+    mensaje = data.get("message")
+    chat_id = TELEGRAM_CHAT_ID
     texto = ""
-    chat_id = None
 
-    if isinstance(data.get("message"), dict):
-        texto = data["message"].get("text", "").strip()
-        chat_id = data["message"].get("chat", {}).get("id")
+    if isinstance(mensaje, dict):
+        texto = mensaje.get("text", "").strip()
+        chat_info = mensaje.get("chat")
+        if isinstance(chat_info, dict):
+            chat_id = chat_info.get("id", TELEGRAM_CHAT_ID)
     else:
-        texto = data.get("message", "").strip()
-        chat_id = TELEGRAM_CHAT_ID
+        texto = str(mensaje).strip()
 
-    if not texto or not chat_id:
+    if not texto:
         return jsonify({"status": "ignorado"})
 
     comando = texto.lower().strip().lstrip("/")
