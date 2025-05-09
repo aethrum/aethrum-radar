@@ -1,216 +1,218 @@
-import os
-import logging
-import json
-import re
+# main.py
+import os, json, time, re, csv, logging
 from flask import Flask, request, jsonify
-import requests
 from bs4 import BeautifulSoup
-from collections import defaultdict, Counter
-from urllib.parse import urlparse
-import xml.etree.ElementTree as ET
-import csv
+import requests
 from datetime import datetime
+from urllib.parse import urlparse
+from collections import defaultdict, Counter
+from filelock import FileLock
 
-# --- Configuración ---
+# Inicialización
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB límite
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-TOKEN_SECRETO = os.getenv("TOKEN_SECRETO")
-PORT = int(os.getenv("PORT", 10000))
-
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
-CSV_FILE = "registros.csv"
-UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", "65"))
+REGISTROS_CSV = "registros.csv"
+UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
 
-if not TELEGRAM_TOKEN or not WEBHOOK_SECRET:
-    raise EnvironmentError("Variables de entorno faltantes")
+# Validación de entorno
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
-# --- Caches ---
+# Cache de palabras clave
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
-esperando_url_verificacion = {}
+pending_verifications = {}
 
-# --- Inicialización ---
 def inicializar_keywords():
-    for folder, cache in [(EMOTION_DIR, KEYWORDS_CACHE), (CATEGORY_DIR, CATEGORIAS_CACHE)]:
-        if not os.path.isdir(folder):
-            raise FileNotFoundError(f"Falta directorio: {folder}")
-        for archivo in os.listdir(folder):
-            if archivo.endswith(".json"):
-                with open(os.path.join(folder, archivo), "r", encoding="utf-8") as f:
-                    datos = json.load(f)
-                    if isinstance(datos, dict) and "keywords" in datos:
-                        cache[archivo.replace(".json", "")] = datos
+    for archivo in os.listdir(EMOTION_DIR):
+        if archivo.endswith(".json"):
+            with open(os.path.join(EMOTION_DIR, archivo), "r", encoding="utf-8") as f:
+                KEYWORDS_CACHE[archivo.replace(".json", "")] = json.load(f)
+    for archivo in os.listdir(CATEGORY_DIR):
+        if archivo.endswith(".json"):
+            with open(os.path.join(CATEGORY_DIR, archivo), "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    if "keywords" in data:
+                        CATEGORIAS_CACHE[archivo.replace(".json", "")] = data
                     else:
-                        cache[archivo.replace(".json", "")] = {"keywords": datos}
+                        CATEGORIAS_CACHE[archivo.replace(".json", "")] = {"keywords": data}
 
 inicializar_keywords()
 
-# --- Utilidades ---
 def clean_text(text):
-    return re.sub(r'\s+', ' ', re.sub(r'[^\w\sÀ-ÿ]', ' ', text.lower())).strip()
+    return re.sub(r"[^\w\s]", " ", text.lower()).strip()
 
 def extract_text_from_url(url):
     try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return None
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        return BeautifulSoup(response.text, "html.parser").get_text(separator=" ")
+        soup = BeautifulSoup(response.text, "html.parser")
+        return soup.get_text(separator=" ")
     except Exception as e:
-        logging.error(f"Error extrayendo texto de URL: {e}")
+        logging.error(f"Error al extraer texto: {e}")
         return None
-
-def is_valid_rss_feed(url):
-    try:
-        response = requests.get(url, timeout=10)
-        root = ET.fromstring(response.content)
-        return root.tag in ["rss", "feed"]
-    except:
-        return False
 
 def detect_emotion(text):
     words = clean_text(text).split()
     word_counts = Counter(words)
     scores = defaultdict(int)
-    for emotion, datos in KEYWORDS_CACHE.items():
-        for palabra, peso in datos.items():
+    for emotion, palabras in KEYWORDS_CACHE.items():
+        for palabra, peso in palabras.items():
             scores[emotion] += word_counts.get(palabra.lower(), 0) * peso
     dominante = max(scores, key=scores.get, default="indefinido")
-    return dominante, dict(scores)
+    return dominante, scores
 
 def detectar_categoria(texto):
     palabras_texto = clean_text(texto).split()
     texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
     coincidencias = defaultdict(set)
-    for categoria, datos in CATEGORIAS_CACHE.items():
-        for palabra, peso in datos.get("keywords", {}).items():
+
+    for categoria, contenido in CATEGORIAS_CACHE.items():
+        keywords = contenido.get("keywords", {})
+        for palabra, peso in keywords.items():
             palabra_limpia = palabra.lower().strip()
-            if " " in palabra_limpia and f" {palabra_limpia} " in texto_completo:
-                puntajes[categoria] += peso
-                coincidencias[categoria].add(palabra_limpia)
-            elif palabra_limpia in palabras_texto:
+            if " " in palabra_limpia:
+                if f" {palabra_limpia} " in texto_completo:
+                    puntajes[categoria] += peso
+                    coincidencias[categoria].add(palabra_limpia)
+            else:
                 repeticiones = palabras_texto.count(palabra_limpia)
-                puntajes[categoria] += repeticiones * peso
-                coincidencias[categoria].add(palabra_limpia)
+                if repeticiones:
+                    puntajes[categoria] += repeticiones * peso
+                    coincidencias[categoria].add(palabra_limpia)
+
     if not puntajes:
-        return "sin_categoria", {}
+        return "otros", {}
+
     max_puntaje = max(puntajes.values())
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
-    return candidatas[0] if len(candidatas) == 1 else max(candidatas, key=lambda c: len(coincidencias[c])), dict(puntajes)
+    if len(candidatas) == 1:
+        return candidatas[0], dict(puntajes)
+    mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
+    return mejor, dict(puntajes)
+
+EMOJI = {
+    "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
+    "Adrenalina": "⚡", "Norepinefrina": "🔥", "Anandamida": "🌀",
+    "Serotonina": "🧘", "Acetilcolina": "🧠", "Fetileminalina": "💘"
+}
 
 def calcular_nuevo_puntaje(dominante, scores, categoria):
     total = sum(scores.values()) or 1
     porcentaje = round((scores.get(dominante, 0) / total) * 100, 2)
     relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
     diversidad = min(len(relevantes), 5) / 5
-    bonus = 1 if categoria != "sin_categoria" else 0
+    bonus = 1 if categoria != "otros" else 0
     puntaje = round((porcentaje * 0.5) + (diversidad * 20) + (bonus * 30), 2)
     return puntaje, porcentaje
 
-def registrar_en_csv(fecha, emocion, url, categoria):
-    with open(CSV_FILE, "a", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, delimiter=";")
-        writer.writerow([fecha, emocion, url, categoria])
-
-def send_telegram(chat_id, message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logging.error(f"Error enviando mensaje: {e}")
-
-# --- Rutas ---
-@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=["POST"])
-def webhook():
-    update = request.get_json()
-    if not update or "message" not in update:
-        return jsonify({"status": "ok"}), 200
-
-    message = update["message"]
-    chat_id = message["chat"]["id"]
-    texto = message.get("text", "").strip()
-
-    if chat_id in esperando_url_verificacion:
-        url = texto
-        if is_valid_rss_feed(url):
-            send_telegram(chat_id, "✅ URL RSS válida")
-        else:
-            send_telegram(chat_id, "❌ No es una URL RSS válida")
-        esperando_url_verificacion.pop(chat_id, None)
-        return jsonify({"status": "ok"}), 200
-
-    if texto.startswith("/verificar"):
-        esperando_url_verificacion[chat_id] = True
-        send_telegram(chat_id, "Introduce la dirección URL RSS para verificar.")
-    elif texto.startswith("/resumen"):
-        return handle_resumen(chat_id)
-    return jsonify({"status": "ok"}), 200
-
-@app.route("/ifttt", methods=["POST"])
-def ifttt():
-    data = request.get_json()
-    token = data.get("token")
-    url = data.get("url")
-    if token != TOKEN_SECRETO or not url:
-        return jsonify({"status": "unauthorized"}), 401
-    texto = extract_text_from_url(url)
-    if not texto:
-        return jsonify({"status": "error"}), 400
-    dominante, scores = detect_emotion(texto)
-    categoria, _ = detectar_categoria(texto)
-    mensaje = generar_mensaje_emocional(dominante, scores, texto, url, categoria)
-    registrar_en_csv(datetime.now().isoformat(), dominante, url, categoria)
-    send_telegram(os.getenv("TELEGRAM_CHAT_ID"), mensaje)
-    return jsonify({"status": "ok"}), 200
-
 def generar_mensaje_emocional(dominante, scores, texto, url=None, categoria=None):
     puntaje, porcentaje = calcular_nuevo_puntaje(dominante, scores, categoria)
-    fragmento = texto.strip().replace("\n", " ")[:300]
+    total = sum(scores.values()) or 1
+    porcentajes = [(k, round((v / total) * 100, 2)) for k, v in sorted(scores.items(), key=lambda x: x[1], reverse=True)]
+    otras = "\n".join([f"- {e}: {p}%" for e, p in porcentajes if e != dominante])
+    emoji = EMOJI.get(dominante, "")
+    estado = "✅ Noticia Aprobada" if puntaje >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
+    fragmento = texto.strip().replace("\n", " ")[:300].replace("maldita", "**BENDITO**")
     mensaje = (
-        f"✅ Puntaje: {puntaje}%\n"
-        f"Emoción dominante: {dominante} ({porcentaje}%)\n"
-        f"Categoría: {categoria}\n"
-        f"Fragmento:\n{fragmento}"
+        f"{estado} (Puntaje: {puntaje}%)\n"
+        f"<b>Emoción dominante:</b> {emoji} {dominante} ({porcentaje}%)\n"
+        f"<b>Categoría detectada:</b> {categoria}\n"
+        f"<b>Otras emociones detectadas:</b>\n{otras}\n"
+        f"<b>Fragmento:</b>\n{fragmento}"
     )
     if url:
         mensaje += f"\n\n{url}"
     return mensaje
 
-def handle_resumen(chat_id):
-    if not os.path.exists(CSV_FILE):
-        send_telegram(chat_id, "No hay registros aún.")
-        return jsonify({"status": "ok"}), 200
-    emociones = Counter()
-    categorias = Counter()
-    total = 0
-    with open(CSV_FILE, "r", encoding="utf-8") as f:
-        for row in csv.reader(f, delimiter=";"):
-            if len(row) < 4:
-                continue
-            _, emocion, _, categoria = row
-            emociones[emocion] += 1
-            categorias[categoria] += 1
-            total += 1
-    if total == 0:
-        send_telegram(chat_id, "No hay registros válidos.")
-        return jsonify({"status": "ok"}), 200
-    top_emocion, count = emociones.most_common(1)[0]
-    porcentaje = round((count / total) * 100, 2)
-    resumen = (
-        f"Total noticias: {total}\n"
-        f"Emoción dominante: {top_emocion} ({porcentaje}%)\n"
-        f"Principales categorías:\n" + "\n".join(f"- {k}: {v}" for k, v in categorias.most_common(3))
-    )
-    send_telegram(chat_id, resumen)
-    return jsonify({"status": "ok"}), 200
+def send_to_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        logging.error(f"Error enviando a Telegram: {e}")
 
-# --- Inicio ---
+@app.route("/", methods=["POST"])
+def recibir_webhook():
+    data = request.get_json(force=True)
+    texto = data.get("message", "").strip()
+    if not texto:
+        return jsonify({"status": "ignorado"})
+
+    if texto.lower() == "verificar":
+        pending_verifications["esperando_url"] = True
+        send_to_telegram("Por favor, introduce ahora la URL que deseas verificar.")
+        return jsonify({"status": "esperando_url"})
+
+    if pending_verifications.get("esperando_url"):
+        url = texto
+        pending_verifications.clear()
+        if not re.match(r'^https?://', url):
+            send_to_telegram("⚠️ URL inválida. Asegúrate de que comience con http o https.")
+            return jsonify({"status": "url inválida"})
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                send_to_telegram(f"✅ URL verificada con éxito: {url}")
+                return jsonify({"status": "verificada"})
+            else:
+                send_to_telegram(f"❌ La URL respondió con error: {response.status_code}")
+                return jsonify({"status": "rechazada"})
+        except Exception as e:
+            send_to_telegram(f"❌ Error al verificar la URL: {e}")
+            return jsonify({"status": "error"})
+
+    if texto.lower() == "/resumen":
+        if not os.path.exists(REGISTROS_CSV):
+            send_to_telegram("⚠️ No hay datos para el resumen.")
+            return jsonify({"status": "ok"})
+        with FileLock(REGISTROS_CSV + ".lock"):
+            with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
+                rows = list(csv.reader(f))
+        emociones = [r[1] for r in rows if len(r) > 1]
+        top3 = Counter(emociones).most_common(3)
+        resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
+        send_to_telegram(resumen)
+        return jsonify({"status": "ok"})
+
+    urls = [p for p in texto.split() if re.match(r'^https?://', p)]
+    if not urls:
+        return jsonify({"status": "ignorado"})
+    url = urls[0]
+
+    contenido = extract_text_from_url(url)
+    if not contenido:
+        return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
+
+    emocion, scores = detect_emotion(contenido)
+    categoria, _ = detectar_categoria(contenido)
+
+    hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    with FileLock(REGISTROS_CSV + ".lock"):
+        with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
+            csv.writer(f).writerow([hoy, emocion, categoria])
+
+    mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
+    send_to_telegram(mensaje)
+    return jsonify({"status": "ok", "emocion": emocion, "categoria": categoria})
+
+@app.errorhandler(404)
+def ruta_no_encontrada(e):
+    return jsonify({"status": "error", "msg": "Ruta no encontrada"}), 404
+
 if __name__ == "__main__":
-    logging.info(f"Iniciando servidor en puerto {PORT}")
-    app.run(host="0.0.0.0", port=PORT, threaded=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
