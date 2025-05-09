@@ -1,14 +1,17 @@
-# main.py
-import os, json, time, re, csv, logging
+import os
+import logging
+import json
+import time
+import re
 from flask import Flask, request, jsonify
-from bs4 import BeautifulSoup
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime
-from urllib.parse import urlparse
+import csv
 from collections import defaultdict, Counter
+from urllib.parse import urlparse
 from filelock import FileLock
 
-# Inicialización
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -17,14 +20,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mi_token_super_secreto")
 EMOTION_DIR = "emociones"
 CATEGORY_DIR = "categorias"
-REGISTROS_CSV = "registros.csv"
 UMBRAL_APROBACION = int(os.getenv("UMBRAL_APROBACION", 65))
+REGISTROS_CSV = "registros.csv"
 
-# Validación de entorno
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise EnvironmentError("Faltan TELEGRAM_TOKEN o TELEGRAM_CHAT_ID")
 
-# Cache de palabras clave
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 pending_verifications = {}
@@ -47,7 +48,7 @@ def inicializar_keywords():
 inicializar_keywords()
 
 def clean_text(text):
-    return re.sub(r"[^\w\s]", " ", text.lower()).strip()
+    return re.sub(r'[^a-z0-9\s]', ' ', text.lower()).strip()
 
 def extract_text_from_url(url):
     try:
@@ -58,7 +59,7 @@ def extract_text_from_url(url):
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
-        return soup.get_text(separator=" ")
+        return soup.get_text(separator=' ')
     except Exception as e:
         logging.error(f"Error al extraer texto: {e}")
         return None
@@ -94,14 +95,16 @@ def detectar_categoria(texto):
                     coincidencias[categoria].add(palabra_limpia)
 
     if not puntajes:
-        return "otros", {}
+        return "sin_categoria", {}
 
     max_puntaje = max(puntajes.values())
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
+
     if len(candidatas) == 1:
         return candidatas[0], dict(puntajes)
-    mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
-    return mejor, dict(puntajes)
+    else:
+        mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
+        return mejor, dict(puntajes)
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
@@ -114,7 +117,7 @@ def calcular_nuevo_puntaje(dominante, scores, categoria):
     porcentaje = round((scores.get(dominante, 0) / total) * 100, 2)
     relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
     diversidad = min(len(relevantes), 5) / 5
-    bonus = 1 if categoria != "otros" else 0
+    bonus = 1 if categoria != "sin_categoria" else 0
     puntaje = round((porcentaje * 0.5) + (diversidad * 20) + (bonus * 30), 2)
     return puntaje, porcentaje
 
@@ -148,6 +151,7 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
+
     texto = data.get("message", "").strip()
     if not texto:
         return jsonify({"status": "ignorado"})
