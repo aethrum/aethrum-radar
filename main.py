@@ -28,6 +28,7 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
+ESTADO_VERIFICACION = {}
 
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
@@ -159,8 +160,31 @@ def recibir_webhook():
         return jsonify({"status": "forbidden"}), 403
 
     texto = data.get("message", "").strip()
+    chat_id = str(data.get("chat", {}).get("id")) or TELEGRAM_CHAT_ID
+
     if not texto:
         return jsonify({"status": "ignorado"})
+
+    if texto.lower() == "/verificar":
+        ESTADO_VERIFICACION[chat_id] = True
+        send_to_telegram("Por favor, introduce la URL RSS que deseas verificar.")
+        return jsonify({"status": "ok"})
+
+    if ESTADO_VERIFICACION.get(chat_id):
+        ESTADO_VERIFICACION.pop(chat_id)
+        url = texto.strip()
+        try:
+            r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                resultado = f"❌ Error {r.status_code}: {url}"
+            elif "xml" in r.headers.get("Content-Type", "") or "<rss" in r.text or "<feed" in r.text:
+                resultado = f"✅ Aprobado: {url}"
+            else:
+                resultado = f"⚠️ No parece un RSS válido: {url}"
+        except Exception as e:
+            resultado = f"❌ Error al verificar: {e}"
+        send_to_telegram(f"<b>Resultado de verificación:</b>\n{resultado}")
+        return jsonify({"status": "ok"})
 
     if texto.lower() == "/resumen":
         if not os.path.exists(REGISTROS_CSV):
