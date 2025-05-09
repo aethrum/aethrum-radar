@@ -28,7 +28,6 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
-
 pending_verifications = {}
 
 def inicializar_keywords():
@@ -152,8 +151,6 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
-    if data.get("token") != WEBHOOK_SECRET:
-        return jsonify({"status": "forbidden"}), 403
 
     texto = data.get("message", "").strip()
     if not texto:
