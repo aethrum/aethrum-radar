@@ -28,7 +28,8 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
-ESTADO_VERIFICACION = {}
+
+pending_verifications = {}
 
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
@@ -101,11 +102,10 @@ def detectar_categoria(texto):
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
 
     if len(candidatas) == 1:
-        categoria_dominante = candidatas[0]
+        return candidatas[0], dict(puntajes)
     else:
-        categoria_dominante = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
-
-    return categoria_dominante, dict(puntajes)
+        mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
+        return mejor, dict(puntajes)
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
@@ -144,14 +144,10 @@ def generar_mensaje_emocional(dominante, scores, texto, url=None, categoria=None
 def send_to_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
-    for _ in range(3):
-        try:
-            r = requests.post(url, json=payload, timeout=10)
-            r.raise_for_status()
-            return
-        except Exception as e:
-            logging.error(f"Error enviando mensaje: {e}")
-            time.sleep(2)
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        logging.error(f"Error enviando a Telegram: {e}")
 
 @app.route("/", methods=["POST"])
 def recibir_webhook():
@@ -160,31 +156,32 @@ def recibir_webhook():
         return jsonify({"status": "forbidden"}), 403
 
     texto = data.get("message", "").strip()
-    chat_id = str(data.get("chat", {}).get("id")) or TELEGRAM_CHAT_ID
-
     if not texto:
         return jsonify({"status": "ignorado"})
 
-    if texto.lower() == "/verificar":
-        ESTADO_VERIFICACION[chat_id] = True
-        send_to_telegram("Por favor, introduce la URL RSS que deseas verificar.")
-        return jsonify({"status": "ok"})
+    if texto.lower() == "verificar":
+        pending_verifications["esperando_url"] = True
+        send_to_telegram("Por favor, introduce ahora la URL que deseas verificar.")
+        return jsonify({"status": "esperando_url"})
 
-    if ESTADO_VERIFICACION.get(chat_id):
-        ESTADO_VERIFICACION.pop(chat_id)
-        url = texto.strip()
+    if pending_verifications.get("esperando_url"):
+        url = texto
+        pending_verifications.clear()
+        if not re.match(r'^https?://', url):
+            send_to_telegram("⚠️ URL inválida. Asegúrate de que comience con http o https.")
+            return jsonify({"status": "url inválida"})
+
         try:
-            r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code != 200:
-                resultado = f"❌ Error {r.status_code}: {url}"
-            elif "xml" in r.headers.get("Content-Type", "") or "<rss" in r.text or "<feed" in r.text:
-                resultado = f"✅ Aprobado: {url}"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                send_to_telegram(f"✅ URL verificada con éxito: {url}")
+                return jsonify({"status": "verificada"})
             else:
-                resultado = f"⚠️ No parece un RSS válido: {url}"
+                send_to_telegram(f"❌ La URL respondió con error: {response.status_code}")
+                return jsonify({"status": "rechazada"})
         except Exception as e:
-            resultado = f"❌ Error al verificar: {e}"
-        send_to_telegram(f"<b>Resultado de verificación:</b>\n{resultado}")
-        return jsonify({"status": "ok"})
+            send_to_telegram(f"❌ Error al verificar la URL: {e}")
+            return jsonify({"status": "error"})
 
     if texto.lower() == "/resumen":
         if not os.path.exists(REGISTROS_CSV):
