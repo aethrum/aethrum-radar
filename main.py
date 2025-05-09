@@ -48,7 +48,9 @@ def inicializar_keywords():
 inicializar_keywords()
 
 def clean_text(text):
-    return re.sub(r'[^a-z0-9\s]', ' ', text.lower()).strip()
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
 
 def extract_text_from_url(url):
     try:
@@ -99,7 +101,6 @@ def detectar_categoria(texto):
 
     max_puntaje = max(puntajes.values())
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
-
     if len(candidatas) == 1:
         return candidatas[0], dict(puntajes)
     else:
@@ -151,48 +152,37 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
+    if data.get("token") != WEBHOOK_SECRET:
+        return jsonify({"status": "no autorizado"}), 403
 
     texto = data.get("message", "").strip()
     if not texto:
         return jsonify({"status": "ignorado"})
 
+    chat_id = TELEGRAM_CHAT_ID
+
+    # Comando Verificar
     if texto.lower() == "verificar":
-        pending_verifications["esperando_url"] = True
-        send_to_telegram("Por favor, introduce ahora la URL que deseas verificar.")
+        pending_verifications[chat_id] = True
+        send_to_telegram("Por favor, envíame el enlace RSS para verificar.")
         return jsonify({"status": "esperando_url"})
 
-    if pending_verifications.get("esperando_url"):
-        url = texto
-        pending_verifications.clear()
-        if not re.match(r'^https?://', url):
-            send_to_telegram("⚠️ URL inválida. Asegúrate de que comience con http o https.")
-            return jsonify({"status": "url inválida"})
+    if pending_verifications.get(chat_id):
+        if re.match(r'^https?://', texto):
+            try:
+                response = requests.head(texto, timeout=5)
+                if response.status_code in [200, 301]:
+                    send_to_telegram("✅ URL verificada correctamente.")
+                else:
+                    send_to_telegram("❌ URL no verificada. Código HTTP inesperado.")
+            except Exception:
+                send_to_telegram("❌ URL no verificada. Error de conexión.")
+        else:
+            send_to_telegram("❌ URL no válida. Debe comenzar con http:// o https://")
+        pending_verifications.pop(chat_id, None)
+        return jsonify({"status": "verificado"})
 
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                send_to_telegram(f"✅ URL verificada con éxito: {url}")
-                return jsonify({"status": "verificada"})
-            else:
-                send_to_telegram(f"❌ La URL respondió con error: {response.status_code}")
-                return jsonify({"status": "rechazada"})
-        except Exception as e:
-            send_to_telegram(f"❌ Error al verificar la URL: {e}")
-            return jsonify({"status": "error"})
-
-    if texto.lower() == "/resumen":
-        if not os.path.exists(REGISTROS_CSV):
-            send_to_telegram("⚠️ No hay datos para el resumen.")
-            return jsonify({"status": "ok"})
-        with FileLock(REGISTROS_CSV + ".lock"):
-            with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
-                rows = list(csv.reader(f))
-        emociones = [r[1] for r in rows if len(r) > 1]
-        top3 = Counter(emociones).most_common(3)
-        resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
-        send_to_telegram(resumen)
-        return jsonify({"status": "ok"})
-
+    # Procesamiento normal de noticias
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
     if not urls:
         return jsonify({"status": "ignorado"})
