@@ -1,7 +1,6 @@
 import os
 import logging
 import json
-import time
 import re
 from flask import Flask, request, jsonify
 import requests
@@ -29,6 +28,7 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
 pending_verifications = {}
+pending_summaries = {}
 
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
@@ -154,17 +154,24 @@ def recibir_webhook():
         return jsonify({"status": "ignorado"})
 
     chat_id = TELEGRAM_CHAT_ID
+    comando = texto.lower().strip().lstrip("/")
 
-    if texto.lower().strip().lstrip("/") == "verificar":
+    if comando == "verificar":
         pending_verifications[chat_id] = True
         send_to_telegram("Por favor, envíame el enlace RSS para verificar.")
         return jsonify({"status": "esperando_url"})
+
+    if comando == "resumen":
+        pending_summaries[chat_id] = True
+        send_to_telegram("Envíame una URL para hacer el resumen.")
+        return jsonify({"status": "esperando_url_resumen"})
 
     contiene_url = any(re.match(r'^https?://', p) for p in texto.split())
     if contiene_url and data.get("token") != WEBHOOK_SECRET:
         return jsonify({"status": "no autorizado"}), 403
 
     if pending_verifications.get(chat_id):
+        pending_verifications.pop(chat_id)
         if re.match(r'^https?://', texto):
             try:
                 response = requests.head(texto, timeout=5)
@@ -176,14 +183,24 @@ def recibir_webhook():
                 send_to_telegram("❌ URL no verificada. Error de conexión.")
         else:
             send_to_telegram("❌ URL no válida. Debe comenzar con http:// o https://")
-        pending_verifications.pop(chat_id, None)
         return jsonify({"status": "verificado"})
+
+    if pending_summaries.get(chat_id):
+        pending_summaries.pop(chat_id)
+        if re.match(r'^https?://', texto):
+            contenido = extract_text_from_url(texto)
+            resumen = contenido[:800] + "..." if contenido else "No se pudo obtener contenido"
+            send_to_telegram(f"<b>Resumen solicitado:</b>\n{resumen}")
+            return jsonify({"status": "resumen_enviado"})
+        else:
+            send_to_telegram("❌ URL no válida para resumen.")
+            return jsonify({"status": "url_invalida"})
 
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
     if not urls:
         return jsonify({"status": "ignorado"})
-    url = urls[0]
 
+    url = urls[0]
     contenido = extract_text_from_url(url)
     if not contenido:
         return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
