@@ -81,7 +81,6 @@ def detectar_categoria(texto):
     texto_completo = " " + " ".join(palabras_texto) + " "
     puntajes = defaultdict(int)
     coincidencias = defaultdict(set)
-
     for categoria, contenido in CATEGORIAS_CACHE.items():
         keywords = contenido.get("keywords", {})
         for palabra, peso in keywords.items():
@@ -95,10 +94,8 @@ def detectar_categoria(texto):
                 if repeticiones:
                     puntajes[categoria] += repeticiones * peso
                     coincidencias[categoria].add(palabra_limpia)
-
     if not puntajes:
         return "sin_categoria", {}
-
     max_puntaje = max(puntajes.values())
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
     if len(candidatas) == 1:
@@ -158,10 +155,14 @@ def recibir_webhook():
 
     chat_id = TELEGRAM_CHAT_ID
 
-    if texto.lower() == "verificar":
+    if texto.lower().strip().lstrip("/") == "verificar":
         pending_verifications[chat_id] = True
         send_to_telegram("Por favor, envíame el enlace RSS para verificar.")
         return jsonify({"status": "esperando_url"})
+
+    contiene_url = any(re.match(r'^https?://', p) for p in texto.split())
+    if contiene_url and data.get("token") != WEBHOOK_SECRET:
+        return jsonify({"status": "no autorizado"}), 403
 
     if pending_verifications.get(chat_id):
         if re.match(r'^https?://', texto):
@@ -177,10 +178,6 @@ def recibir_webhook():
             send_to_telegram("❌ URL no válida. Debe comenzar con http:// o https://")
         pending_verifications.pop(chat_id, None)
         return jsonify({"status": "verificado"})
-
-    contiene_url = any(re.match(r'^https?://', p) for p in texto.split())
-    if contiene_url and data.get("token") != WEBHOOK_SECRET:
-        return jsonify({"status": "no autorizado"}), 403
 
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
     if not urls:
