@@ -99,12 +99,8 @@ def detectar_categoria(texto):
 
     max_puntaje = max(puntajes.values())
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
-
-    if len(candidatas) == 1:
-        return candidatas[0], dict(puntajes)
-    else:
-        mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
-        return mejor, dict(puntajes)
+    mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
+    return mejor, dict(puntajes)
 
 EMOJI = {
     "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
@@ -151,33 +147,9 @@ def send_to_telegram(msg):
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
-
     texto = data.get("message", "").strip()
     if not texto:
         return jsonify({"status": "ignorado"})
-
-    if texto.lower() == "verificar":
-        pending_verifications["esperando_url"] = True
-        send_to_telegram("Por favor, introduce ahora la URL que deseas verificar.")
-        return jsonify({"status": "esperando_url"})
-
-    if pending_verifications.get("esperando_url"):
-        url = texto
-        pending_verifications.clear()
-        if not re.match(r'^https?://', url):
-            send_to_telegram("⚠️ URL inválida. Asegúrate de que comience con http o https.")
-            return jsonify({"status": "url inválida"})
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                send_to_telegram(f"✅ URL verificada con éxito: {url}")
-                return jsonify({"status": "verificada"})
-            else:
-                send_to_telegram(f"❌ La URL respondió con error: {response.status_code}")
-                return jsonify({"status": "rechazada"})
-        except Exception as e:
-            send_to_telegram(f"❌ Error al verificar la URL: {e}")
-            return jsonify({"status": "error"})
 
     if texto.lower() == "/resumen":
         if not os.path.exists(REGISTROS_CSV):
