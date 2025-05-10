@@ -1,3 +1,4 @@
+
 import os
 import logging
 import json
@@ -152,17 +153,47 @@ def recibir_webhook():
         return jsonify({"status": "ignorado"})
 
     if texto.lower() == "/resumen":
-        if not os.path.exists(REGISTROS_CSV):
-            send_to_telegram("⚠️ No hay datos para el resumen.")
+        try:
+            if not os.path.exists("registros.csv"):
+                send_to_telegram("⚠️ No hay información que resumir. Aún no se han procesado emociones.")
+                return jsonify({"status": "ok"})
+
+            with FileLock("registros.csv.lock", timeout=10):
+                with open("registros.csv", "r", encoding="utf-8") as f:
+                    rows = list(csv.reader(f))
+
+            if not rows:
+                send_to_telegram("⚠️ No hay información que resumir. El archivo está vacío.")
+                return jsonify({"status": "ok"})
+
+            if any(len(r) < 2 for r in rows):
+                send_to_telegram("⚠️ El archivo CSV tiene filas mal formateadas.")
+                return jsonify({"status": "error", "msg": "CSV mal formateado"})
+
+            emociones = [r[1].strip() for r in rows if len(r) > 1 and r[1].strip()]
+            if not emociones:
+                send_to_telegram("⚠️ No hay emociones registradas en los datos.")
+                return jsonify({"status": "ok"})
+
+            conteo = Counter(emociones)
+            total = len(emociones)
+            top3 = conteo.most_common(3)
+
+            resumen = "<b>#Resumen Diario</b>\n\n"
+            for emo, cant in top3:
+                porcentaje = round((cant / total) * 100, 2)
+                resumen += f"- {emo}: {porcentaje}%\n"
+
+            send_to_telegram(resumen)
             return jsonify({"status": "ok"})
-        with FileLock(REGISTROS_CSV + ".lock"):
-            with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
-                rows = list(csv.reader(f))
-        emociones = [r[1] for r in rows if len(r) > 1]
-        top3 = Counter(emociones).most_common(3)
-        resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
-        send_to_telegram(resumen)
-        return jsonify({"status": "ok"})
+
+        except Exception as e:
+            logging.error(f"Error generando resumen: {e}", exc_info=True)
+            try:
+                send_to_telegram("❌ Error interno al generar el resumen.")
+            except Exception as telegram_error:
+                logging.error(f"Error enviando mensaje de error a Telegram: {telegram_error}")
+            return jsonify({"status": "error", "msg": str(e)})
 
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
     if not urls:
@@ -177,8 +208,8 @@ def recibir_webhook():
     categoria, _ = detectar_categoria(contenido)
 
     hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    with FileLock(REGISTROS_CSV + ".lock"):
-        with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
+    with FileLock("registros.csv.lock"):
+        with open("registros.csv", "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([hoy, emocion, categoria])
 
     mensaje = generar_mensaje_emocional(emocion, scores, contenido, url, categoria)
