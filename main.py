@@ -1,13 +1,12 @@
 import os
 import logging
 import json
-import time
 import re
-from flask import Flask, request, jsonify
+import csv
 import requests
+from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
 from datetime import datetime
-import csv
 from collections import defaultdict, Counter
 from urllib.parse import urlparse
 from filelock import FileLock
@@ -155,6 +154,7 @@ def recibir_webhook():
         try:
             if not os.path.exists(REGISTROS_CSV):
                 send_to_telegram("⚠️ No hay datos para el resumen.")
+                logging.info("Archivo registros.csv no encontrado.")
                 return jsonify({"status": "ok"})
 
             with FileLock(REGISTROS_CSV + ".lock", timeout=10):
@@ -163,15 +163,18 @@ def recibir_webhook():
 
             if not rows:
                 send_to_telegram("⚠️ El archivo está vacío.")
+                logging.info("Archivo registros.csv está vacío.")
                 return jsonify({"status": "ok"})
 
             if any(len(r) < 2 for r in rows):
                 send_to_telegram("⚠️ El archivo CSV tiene filas mal formateadas.")
+                logging.warning("Filas mal formateadas detectadas.")
                 return jsonify({"status": "error", "msg": "CSV mal formateado"})
 
             emociones = [r[1].strip() for r in rows if len(r) > 1 and r[1].strip()]
             if not emociones:
                 send_to_telegram("⚠️ No se encontraron emociones válidas.")
+                logging.info("No hay emociones válidas para resumir.")
                 return jsonify({"status": "ok"})
 
             conteo = Counter(emociones)
@@ -184,6 +187,7 @@ def recibir_webhook():
                 resumen += f"- {emo}: {porcentaje}%\n"
 
             send_to_telegram(resumen)
+            logging.info("Resumen enviado correctamente.")
             return jsonify({"status": "ok"})
 
         except Exception as e:
@@ -191,7 +195,7 @@ def recibir_webhook():
             try:
                 send_to_telegram("❌ Error interno al generar el resumen.")
             except Exception as telegram_error:
-                logging.error(f"Error enviando mensaje de error a Telegram: {telegram_error}")
+                logging.error(f"Error al enviar error a Telegram: {telegram_error}")
             return jsonify({"status": "error", "msg": str(e)})
 
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
