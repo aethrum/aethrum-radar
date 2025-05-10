@@ -1,7 +1,6 @@
 import os
 import logging
 import json
-import time
 import re
 from flask import Flask, request, jsonify
 import requests
@@ -28,8 +27,8 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
 KEYWORDS_CACHE = {}
 CATEGORIAS_CACHE = {}
-pending_verifications = {}
 
+# Inicialización de palabras clave
 def inicializar_keywords():
     for archivo in os.listdir(EMOTION_DIR):
         if archivo.endswith(".json"):
@@ -47,6 +46,7 @@ def inicializar_keywords():
 
 inicializar_keywords()
 
+# Utilidades
 def clean_text(text):
     return re.sub(r'[^a-z0-9\s]', ' ', text.lower()).strip()
 
@@ -95,47 +95,14 @@ def detectar_categoria(texto):
                     coincidencias[categoria].add(palabra_limpia)
 
     if not puntajes:
-        return "sin_categoria", {}
+        return "general", {}  # Categoría predeterminada
 
     max_puntaje = max(puntajes.values())
     candidatas = [cat for cat, pts in puntajes.items() if pts == max_puntaje]
     mejor = max(candidatas, key=lambda c: (len(coincidencias[c]), c))
     return mejor, dict(puntajes)
 
-EMOJI = {
-    "Dopamina": "✨", "Oxitocina": "❤️", "Asombro": "🌟",
-    "Adrenalina": "⚡", "Norepinefrina": "🔥", "Anandamida": "🌀",
-    "Serotonina": "🧘", "Acetilcolina": "🧠", "Fetileminalina": "💘"
-}
-
-def calcular_nuevo_puntaje(dominante, scores, categoria):
-    total = sum(scores.values()) or 1
-    porcentaje = round((scores.get(dominante, 0) / total) * 100, 2)
-    relevantes = [v for v in scores.values() if (v / total) * 100 > 5]
-    diversidad = min(len(relevantes), 5) / 5
-    bonus = 1 if categoria != "sin_categoria" else 0
-    puntaje = round((porcentaje * 0.5) + (diversidad * 20) + (bonus * 30), 2)
-    return puntaje, porcentaje
-
-def generar_mensaje_emocional(dominante, scores, texto, url=None, categoria=None):
-    puntaje, porcentaje = calcular_nuevo_puntaje(dominante, scores, categoria)
-    total = sum(scores.values()) or 1
-    porcentajes = [(k, round((v / total) * 100, 2)) for k, v in sorted(scores.items(), key=lambda x: x[1], reverse=True)]
-    otras = "\n".join([f"- {e}: {p}%" for e, p in porcentajes if e != dominante])
-    emoji = EMOJI.get(dominante, "")
-    estado = "✅ Noticia Aprobada" if puntaje >= UMBRAL_APROBACION else "⚠️ Noticia con baja relevancia"
-    fragmento = texto.strip().replace("\n", " ")[:300].replace("maldita", "**BENDITO**")
-    mensaje = (
-        f"{estado} (Puntaje: {puntaje}%)\n"
-        f"<b>Emoción dominante:</b> {emoji} {dominante} ({porcentaje}%)\n"
-        f"<b>Categoría detectada:</b> {categoria}\n"
-        f"<b>Otras emociones detectadas:</b>\n{otras}\n"
-        f"<b>Fragmento:</b>\n{fragmento}"
-    )
-    if url:
-        mensaje += f"\n\n{url}"
-    return mensaje
-
+# Comunicación con Telegram
 def send_to_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
@@ -144,26 +111,56 @@ def send_to_telegram(msg):
     except Exception as e:
         logging.error(f"Error enviando a Telegram: {e}")
 
+# Rutas
 @app.route("/", methods=["POST"])
 def recibir_webhook():
     data = request.get_json(force=True)
+
+    # Validación del token secreto
+    if data.get("token") != WEBHOOK_SECRET:
+        return jsonify({"status": "forbidden"}), 403
+
     texto = data.get("message", "").strip()
     if not texto:
         return jsonify({"status": "ignorado"})
 
     if texto.lower() == "/resumen":
-        if not os.path.exists(REGISTROS_CSV):
-            send_to_telegram("⚠️ No hay datos para el resumen.")
-            return jsonify({"status": "ok"})
-        with FileLock(REGISTROS_CSV + ".lock"):
-            with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
-                rows = list(csv.reader(f))
-        emociones = [r[1] for r in rows if len(r) > 1]
-        top3 = Counter(emociones).most_common(3)
-        resumen = "<b>#Resumen Diario</b>\n\n" + "\n".join([f"- {e}: {round(c/len(rows)*100,2)}%" for e, c in top3])
-        send_to_telegram(resumen)
-        return jsonify({"status": "ok"})
+        try:
+            if not os.path.exists(REGISTROS_CSV):
+                send_to_telegram("⚠️ No hay datos para el resumen.")
+                return jsonify({"status": "ok"})
 
+            with FileLock(REGISTROS_CSV + ".lock", timeout=10):
+                with open(REGISTROS_CSV, "r", encoding="utf-8") as f:
+                    rows = list(csv.reader(f))
+
+            if not rows:
+                send_to_telegram("⚠️ El archivo está vacío.")
+                return jsonify({"status": "ok"})
+
+            emociones = [r[1].strip() for r in rows if len(r) > 1 and r[1].strip()]
+            if not emociones:
+                send_to_telegram("⚠️ No se encontraron emociones válidas.")
+                return jsonify({"status": "ok"})
+
+            conteo = Counter(emociones)
+            total = len(emociones)
+            top3 = conteo.most_common(3)
+
+            resumen = "<b>#Resumen Diario</b>\n\n"
+            for emo, cant in top3:
+                porcentaje = round((cant / total) * 100, 2)
+                resumen += f"- {emo}: {porcentaje}%\n"
+
+            send_to_telegram(resumen)
+            return jsonify({"status": "ok"})
+
+        except Exception as e:
+            logging.error(f"Error generando resumen: {e}", exc_info=True)
+            send_to_telegram("❌ Error interno al generar el resumen.")
+            return jsonify({"status": "error", "msg": str(e)})
+
+    # Procesamiento de URLs
     urls = [p for p in texto.split() if re.match(r'^https?://', p)]
     if not urls:
         return jsonify({"status": "ignorado"})
@@ -171,13 +168,14 @@ def recibir_webhook():
 
     contenido = extract_text_from_url(url)
     if not contenido:
+        send_to_telegram("⚠️ No se pudo extraer texto de la URL proporcionada.")
         return jsonify({"status": "error", "msg": "No se pudo extraer texto"})
 
     emocion, scores = detect_emotion(contenido)
     categoria, _ = detectar_categoria(contenido)
 
     hoy = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    with FileLock(REGISTROS_CSV + ".lock"):
+    with FileLock(REGISTROS_CSV + ".lock", timeout=10):
         with open(REGISTROS_CSV, "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([hoy, emocion, categoria])
 
